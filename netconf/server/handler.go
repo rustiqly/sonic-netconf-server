@@ -1,0 +1,306 @@
+package server
+
+import (
+	"bufio"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"os/exec"
+	"regexp"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/Azure/sonic-mgmt-framework/lib"
+	"github.com/antchfx/xmlquery"
+	"github.com/gliderlabs/ssh"
+	"github.com/golang/glog"
+)
+
+var sessionID = 0
+
+const (
+	delimeter   = "]]>]]>"
+	declaration = "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+)
+
+func SessionHandler(s ssh.Session) {
+
+	scanner := bufio.NewScanner(s)
+	scanner.Split(SplitAt)
+
+	// Send server capablities
+	s.Write([]byte(capabilitesXML()))
+
+	// Read client capablities
+	scanner.Scan()
+	err := readCapabilities(scanner.Text())
+	if err != nil {
+		writeResponse(s, createErrorResponse("1", err))
+		s.Close()
+	}
+
+	// Start main loop for incoming rpc calls
+	for scanner.Scan() {
+		requestStr := scanner.Text()
+		fmt.Printf("\nReceving request <<< %s >>> \n %s \n\n", time.Now().Local().String(), requestStr)
+		response := process(s, requestStr)
+		fmt.Printf("\nSending response <<< %s >>> \n %s \n\n", time.Now().Local().String(), response)
+		writeResponse(s, response)
+	}
+}
+
+func capabilitesXML() string {
+
+	var serverHello Hello
+
+	sessionID += 1 // handle session id out of bounds
+	serverHello.SessionID = sessionID
+	serverHello.Capabilities = append(serverHello.Capabilities, CapNetconf10)
+	serverHello.Capabilities = append(serverHello.Capabilities, CapNetconf11)
+
+	serverHello.Capabilities = append(serverHello.Capabilities, CapCandidate)
+	serverHello.Capabilities = append(serverHello.Capabilities, CapXPath)
+	serverHello.Capabilities = append(serverHello.Capabilities, CapMonitoring)
+
+	if !read {
+		readYangModules()
+	}
+
+	capYangLib := "urn:ietf:params:netconf:capability:yang-library:1.0?module-set-id=" + *YangModules.ModuleSetId
+	serverHello.Capabilities = append(serverHello.Capabilities, capYangLib)
+
+	for _, module := range YangModules.Modules {
+		supportedCap := *module.Namespace + "?module=" + *module.Name + "&revision=" + *module.Revision
+		serverHello.Capabilities = append(serverHello.Capabilities, supportedCap)
+	}
+
+	output, _ := xml.Marshal(serverHello)
+
+	return string(output) + delimeter
+}
+
+func readCapabilities(clientCaps string) error {
+
+	mainNode, err := xmlquery.Parse(strings.NewReader(clientCaps))
+
+	if err != nil {
+		return err
+	}
+
+	helloNode := xmlquery.FindOne(mainNode, "//*[local-name() = 'hello']/*")
+
+	if helloNode == nil {
+		return errors.New("Invalid client capablities, exiting")
+	}
+
+	return nil
+}
+
+func process(session ssh.Session, requestStr string) string {
+
+	defer doRecover(session, requestStr)
+
+	rpcNode, err := xmlquery.Parse(strings.NewReader(requestStr))
+
+	if err != nil {
+		return createErrorResponse(extractMessageId(requestStr), errors.New("Malformed XML"))
+	}
+
+	rootNode := xmlquery.FindOne(rpcNode, "*")
+
+	if rootNode == nil {
+		return createErrorResponse(extractMessageId(requestStr), errors.New("Malformed XML"))
+	}
+
+	messageId := rootNode.SelectAttr("message-id")
+
+	if messageId == "" {
+		return createErrorResponse(extractMessageId(requestStr), errors.New("Unable to read message-id in rpc"))
+	}
+
+	response, err := handleRequest(session.Context().(ssh.Context), rootNode)
+
+	if err != nil {
+		return createErrorResponse(messageId, err)
+	}
+
+	return CreateResponse(messageId, []byte(response))
+}
+
+func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, error) {
+
+	var response string
+	var err error
+
+	typeNode := xmlquery.FindOne(requestNode, "//*[local-name() = 'rpc']/*") // Get request type (get or edit-config)
+
+	switch typeNode.Data {
+	case "get":
+		response, err = GetRequestHandler(context, requestNode)
+	case "get-config":
+		response, err = GetRequestHandler(context, requestNode)
+	case "edit-config":
+		response, err = EditRequestHandler(context, requestNode)
+	case "get-schema":
+		response, err = withAuth(context, "get-schema", func() (string, error) { return FilterSchemaHandler(requestNode) })
+	case "commit":
+		return withAuth(context, "commit", func() (string, error) { saveConfig(); return "ok", nil })
+	case "close-session":
+		return withAuth(context, "close-session", func() (string, error) {
+			if context.Value("auth-type").(string) == "tacacs" {
+				tacConn := context.Value("auth").(lib.TacacsAuthenticator)
+				glog.Infof("[TACPLUS] Closing tacacs server connection")
+				tacConn.Disconnect()
+				context.SetValue("auth", nil) // completely remove tacacs connection reference
+			}
+			return "ok", nil
+		})
+	case "lock":
+		return withAuth(context, "lock", func() (string, error) {
+			return "ok", nil
+		})
+	case "unlock":
+		return withAuth(context, "unlock", func() (string, error) {
+			return "ok", nil
+		})
+	case "sonic-rpc":
+		response, err = RpcRequestHandler(context, requestNode)
+	default:
+		return "", errors.New("Unsupported command")
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	return response, nil
+}
+
+func CreateResponseFromNode(request *xmlquery.Node, responsePayload []byte) string {
+	messageId := request.SelectAttr("message-id")
+	return CreateResponse(messageId, responsePayload)
+}
+
+func CreateResponse(messageId string, responsePayload []byte) string {
+	reply := string(responsePayload)
+	switch reply {
+	case "{}":
+		reply = `<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="` + messageId + `"></rpc-reply>`
+	case "ok":
+		reply = `<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="` + messageId + `"><ok/></rpc-reply>`
+	default:
+		reply = `<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="` + messageId + `">` + reply + "</rpc-reply>"
+		reply = strings.ReplaceAll(reply, "&amp;", "&")
+	}
+	return declaration + reply
+}
+
+func writeResponse(session ssh.Session, message string) {
+	responseString := fmt.Sprintf(ChunkedMessage, len(message), message)
+	session.Write([]byte(responseString))
+}
+
+func writeOkResponse(session ssh.Session, id string) {
+	writeResponse(session, CreateResponse(id, []byte("ok")))
+}
+
+func createErrorXML(err error) string {
+	return fmt.Sprintf("<rpc-error><error-type>rpc</error-type><error-severity>error</error-severity><error-message xml:lang=\"en\">%s</error-message></rpc-error>", err.Error())
+}
+
+func createErrorResponse(messageId string, err error) string {
+	return CreateResponse(messageId, []byte(createErrorXML(err)))
+}
+
+func DefaultHandler(s ssh.Session) {
+	fmt.Println("Default ssh is disabled, closing connection")
+	s.Close()
+}
+
+func SplitAt(data []byte, atEOF bool) (advance int, token []byte, err error) {
+
+	if atEOF && len(data) == 0 || len(trimInput(string(data))) == 0 {
+		return 0, nil, nil
+	}
+
+	// Find the index of the input of the separator substring
+	if i := strings.Index(string(data), RPCDelimiter); i >= 0 {
+		return i + len(RPCDelimiter), data[0:i], nil
+	}
+
+	if i := strings.Index(string(data), ChunkDelimiter); i >= 0 {
+		return i + len(ChunkDelimiter), data[0:i], nil
+	}
+
+	// If at end of file with data return the data
+	if atEOF {
+		return len(data), data, nil
+	}
+
+	return 0, nil, nil
+}
+
+func saveConfig() {
+	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
+	_, err := exec.Command("bash", args...).Output()
+
+	if err != nil {
+		glog.Error("Config save failed, configuration will not persist")
+	}
+}
+
+func trimInput(input string) string {
+	trimmed := strings.Trim(string(input), "\n")
+	trimmed = strings.Trim(string(trimmed), "\r")
+	trimmed = strings.Trim(string(trimmed), " ")
+	return trimmed
+}
+
+func doRecover(session ssh.Session, inputStr string) {
+	if err := recover(); err != nil {
+
+		buf := make([]byte, 64<<10)
+		buf = buf[:runtime.Stack(buf, false)]
+
+		glog.Errorf("Runtime error: panic serving NETCONF request", inputStr)
+		glog.Errorf("Panic data: %v\n%s", err, buf)
+
+		errorXML := createErrorXML(errors.New("Unable to handle request"))
+		writeResponse(session, CreateResponse(extractMessageId(inputStr), []byte(errorXML)))
+	}
+}
+
+func extractMessageId(xmlStr string) string {
+	r := regexp.MustCompile("message-id=\"(\\S+)\"")
+	matches := r.FindStringSubmatch(xmlStr)
+	if len(matches) == 0 {
+		return "1"
+	}
+	return matches[1]
+}
+
+func withAuth(context ssh.Context, command string, fn func() (string, error)) (string, error) {
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize(command, "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %s", command))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %s", command)
+
+	response, err := fn()
+
+	if err != nil {
+		return response, err
+	}
+
+	if !authenticator.Account(command, "") {
+		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", command))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - %s", command)
+
+	return response, nil
+}

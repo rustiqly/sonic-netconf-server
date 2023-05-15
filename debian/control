@@ -1,0 +1,19 @@
+Source: sonic-netconf 
+Maintainer: Hossam Hassan <hossam4.hassan.ext@orange.com>
+Build-Depends: debhelper (>= 8.0.0),
+               dh-systemd
+Standards-Version: 3.9.3
+Section: net
+
+Package: sonic-netconf 
+Priority: extra  
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}  
+Description: SONiC Netconf Server 
+
+Package: sonic-netconf-dbg
+Priority: extra
+Architecture: any
+Section: debug
+Depends: sonic-netconf (=${binary:Version})
+Description: debugging symbols for SONiC Netconf Server

@@ -1,0 +1,430 @@
+package server
+
+import (
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"html"
+	"io/ioutil"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/Azure/sonic-mgmt-common/translib"
+	"github.com/Azure/sonic-mgmt-framework/build/netconf_codegen"
+	"github.com/Azure/sonic-mgmt-framework/lib"
+	"github.com/antchfx/xmlquery"
+	"github.com/clbanning/mxj/v2"
+	"github.com/gliderlabs/ssh"
+	"github.com/golang/glog"
+)
+
+var (
+	YangSchemas map[string][]Schema
+	YangModules ModulesState
+	read        = false
+)
+
+func readYangModules() {
+	// return all schemas in module form
+	schemas := []Schema{}
+	YangSchemas = make(map[string][]Schema)
+
+	yangMod, err := translib.GetYanglibInfo()
+
+	if err != nil {
+		glog.Warning("Unable to read yangmodules")
+		return
+	}
+
+	YangModules.ModuleSetId = yangMod.ModuleSetId
+
+	for module_key, module := range yangMod.Module {
+
+		schema := Schema{}
+		schema.Identifier = strings.ToLower(*module.Name)
+		schema.Version = module_key.Revision
+		schema.Format = "yang"
+		schema.NameSpace = *module.Namespace
+		schema.ModelPath = "/usr/models/yang/" + *module.Name + ".yang"
+		schema.Location = "NETCONF"
+
+		schemas = append(schemas, schema)
+
+		YangSchemas[schema.Identifier] = append(YangSchemas[schema.Identifier], schema)
+
+		mod := Module{}
+
+		mod.Name = module.Name
+		mod.Namespace = module.Namespace
+		mod.Revision = module.Revision
+		if module.Schema == nil {
+			s := ("http://localhost/usr/models/yang/" + *module.Name)
+			mod.Schema = &s
+		} else {
+			mod.Schema = module.Schema
+		}
+		if module.ConformanceType == 0 {
+			mod.ConformanceType = "UNSET"
+		} else if module.ConformanceType == 1 {
+			mod.ConformanceType = "implement"
+		} else if module.ConformanceType == 2 {
+			mod.ConformanceType = "import"
+		}
+
+		YangModules.Modules = append(YangModules.Modules, mod)
+	}
+	read = true
+}
+
+func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+
+	paths, err := ParseGetRequest(rootNode, false)
+
+	if err != nil {
+		return "", err
+	}
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	for _, path := range paths {
+		// Authorize
+		if !authenticator.Authorize("get", path) {
+			return "", errors.New(fmt.Sprintf("Unauthorized access %s", path))
+		}
+		glog.Infof("[TACPLUS] authorization passed %s", path)
+	}
+
+	resultStr := "<data>"
+
+	args := ""
+	for _, path := range paths {
+
+		pathResult, err := innerGetHandler(rootNode, path)
+
+		if err != nil {
+			return "", errors.New("Failed to handle request")
+		}
+
+		resultStr += pathResult
+		args += path + ", "
+	}
+
+	// Account
+	if !authenticator.Account("get", args) {
+		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed get - args:%s", args))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - get: %s", args)
+
+	resultStr += "</data>"
+
+	return resultStr, nil
+}
+
+func innerGetHandler(rootNode *xmlquery.Node, path string) (string, error) {
+
+	switch path {
+	case "/modules-state:modules-state":
+		response, err := xml.MarshalIndent(YangModules, "", "   ")
+		if err != nil {
+			return "", errors.New("Unable to read yang modules")
+		}
+		resStr := string(response)
+		return resStr, nil
+	case "/netconf-state:netconf-state/schemas":
+		path, _ := ParseGetRequest(rootNode, true)
+		return getSchemas(path[0]), nil
+	case "/operation:operation":
+		return "", nil
+	default:
+		req := translib.GetRequest{Path: path}
+		resp, err1 := translib.Get(req)
+		if err1 == nil {
+			translibResponse := string(resp.Payload)
+
+			// Check for empty response
+			if translibResponse == "{}" {
+				return "", nil
+			}
+
+			r := regexp.MustCompile("\"(.*?)\"")
+			s := r.FindStringSubmatch(translibResponse)
+			if len(s) == 0 {
+				return "", errors.New("Translib parsing error [1]")
+			}
+
+			r2 := regexp.MustCompile("(\\S+):(\\S+)")
+			s2 := r2.FindStringSubmatch(s[1])
+
+			if len(s) == 0 {
+				return "", errors.New("Translib parsing error [2]")
+			}
+
+			translibResponse = strings.Replace(translibResponse, s2[0], s2[2], 1)
+
+			if s2[1] != s2[2] {
+				// Inner filters used
+				translibResponse = "{\"" + s2[1] + "\":" + translibResponse + "}"
+			}
+
+			// Convert to xml
+			jsonConv, _ := mxj.NewMapJson([]byte(translibResponse))
+			xmlPayload, _ := jsonConv.Xml()
+
+			xmlPayload = reorderKeys(path, xmlPayload)
+
+			resultStr := string(xmlPayload)
+
+			namespace := YangSchemas[s2[1]][0].NameSpace
+			resultStr = strings.Replace(resultStr, s2[1], s2[1]+" xmlns=\""+namespace+"\"", 1)
+
+			return resultStr, nil
+		}
+	}
+
+	return "", nil
+}
+
+func reorderKeys(path string, xml []byte) []byte {
+
+	arr, _ := mxj.NewMapXmlSeq(xml)
+
+	for k, keys := range netconf_codegen.SonicMap {
+
+		var keysReversed = make([]string, len(keys))
+
+		for i, k := range keys {
+			keysReversed[len(keys)-i-1] = k
+		}
+
+		if strings.Contains(k, path+"/") {
+
+			pathSplit := strings.Split(k, "/")
+
+			module := strings.Split(pathSplit[1], ":")[0]
+			parent := pathSplit[2]
+			list := pathSplit[3]
+
+			if _, ok := arr[module].(map[string]interface{})[parent]; !ok {
+				continue
+			}
+
+			listObj := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list]
+
+			switch listObj.(type) {
+			case map[string]interface{}:
+
+				listCast := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].(map[string]interface{})
+
+				for i, key := range keysReversed {
+					listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
+				}
+
+				arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listCast
+
+			case []interface{}:
+
+				listArr := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].([]interface{})
+
+				for i, value := range listArr {
+
+					listItem := value.(map[string]interface{})
+
+					for i, key := range keysReversed {
+						listItem[key].(map[string]interface{})["#seq"] = -(i + 1)
+					}
+
+					listArr[i] = listItem
+				}
+
+				arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listArr
+			}
+		}
+	}
+
+	result, _ := arr.Xml()
+	return result
+}
+
+func getSchemas(xpath string) string {
+	xpath = strings.ToLower(xpath)
+	var netconf_state State
+	var temp Schema
+
+	if xpath == RPCGetSchemas || xpath == RPCGetSchemas+"/schema" {
+		for _, schemas := range YangSchemas {
+			netconf_state.Schemas = append(netconf_state.Schemas, schemas...)
+		}
+		return prepareSchemasReply(netconf_state)
+	}
+
+	for _, schemas := range YangSchemas {
+		for _, schema := range schemas {
+			temp = Schema{}
+
+			if strings.Contains(xpath, "identifier") {
+				temp.Identifier = schema.Identifier
+			}
+
+			if strings.Contains(xpath, "version") {
+				temp.Version = schema.Version
+			}
+
+			if strings.Contains(xpath, "format") {
+				temp.Format = schema.Format
+			}
+
+			if strings.Contains(xpath, "namespace") {
+				temp.NameSpace = schema.NameSpace
+			}
+
+			if strings.Contains(xpath, "location") {
+				temp.Location = schema.Location
+			}
+
+			netconf_state.Schemas = append(netconf_state.Schemas, temp)
+		}
+	}
+
+	return prepareSchemasReply(netconf_state)
+}
+
+func FilterSchemaHandler(rootNode *xmlquery.Node) (string, error) {
+
+	req, err := ParseGetSchemaRequest(rootNode)
+
+	if err != nil {
+		return "", err
+	}
+
+	schema := Schema{}
+
+	identifier := strings.ToLower(req.Identifier)
+	format := strings.ToLower(req.Format)
+
+	for _, model := range YangSchemas[identifier] {
+		if (req.Format == "" || model.Format == format) &&
+			(req.Version == "" || model.Version == req.Version) {
+			schema = model
+			break
+		}
+	}
+
+	yangData := readYangFile(schema.ModelPath)
+	yangData = html.EscapeString(yangData)
+
+	yangData = "<data xmlns=\"urn:ietf:params:xml:ns:yang:ietf-netconf-monitoring\">" + yangData + "</data>"
+
+	return yangData, nil
+}
+
+func readYangFile(path string) string {
+	yangFile, err := os.Open(path)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	defer yangFile.Close()
+
+	byteValue, _ := ioutil.ReadAll(yangFile)
+
+	return html.EscapeString(string(byteValue))
+}
+
+func prepareSchemasReply(st State) string {
+	response, _ := xml.MarshalIndent(st, "", "   ")
+	return string(response)
+}
+
+func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+
+	configs, err := ParseEditRequest(rootNode)
+
+	glog.Infof("Configs extracted %+v", configs)
+
+	if err != nil {
+		return "", err
+	}
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	for _, config := range configs {
+		// Authorize
+		if !authenticator.Authorize("edit-config", config.path) {
+			return "", errors.New(fmt.Sprintf("Unauthorized access %s", config.path))
+		}
+		glog.Infof("[TACPLUS] authorization passed %s", config.path)
+	}
+
+	for _, config := range configs {
+
+		jsonStr, err := json.Marshal(config.payload)
+
+		if err != nil {
+			return "", errors.New("Converting payload to byte array failed")
+		}
+
+		req := translib.SetRequest{Path: config.path, Payload: jsonStr}
+
+		switch config.operation {
+		case "merge":
+			_, err = translib.Create(req)
+		case "delete":
+			_, err = translib.Delete(req)
+		default:
+			return "", errors.New("unsupported operation: " + config.operation)
+		}
+
+		if err != nil {
+			return "", err
+		}
+
+		// Account
+		if !authenticator.Account("edit-config", config.path) {
+			return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed edit-config - args:%s", config.path))
+		}
+
+		glog.Infof("[TACPLUS] accounting passed - edit-config: %s", config.path)
+		
+	}
+
+	// // Account
+	// if !authenticator.Account("edit-config", args) {
+	// 	return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed edit-config - args:%s", args))
+	// }
+
+	// glog.Infof("[TACPLUS] accounting passed - edit-config: %s", args)
+
+	return "ok", nil
+}
+
+func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+
+	glog.Infof("RPC request handler")
+
+	requests, err := ParseRPCRequest(rootNode)
+
+	if err != nil {
+		return "", err
+	}
+
+	glog.Info("requests %+v", requests)
+
+	for _, request := range requests {
+		jsonStr, _ := json.Marshal(request.payload)
+		req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
+		resp, _ := translib.Action(req)
+		glog.Infof("Response %s", resp)
+	}
+
+	return "ok", nil
+}
+
+func Reverse(s []string) []string {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
+	return s
+}

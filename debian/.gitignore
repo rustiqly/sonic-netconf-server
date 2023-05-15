@@ -1,0 +1,8 @@
+.debhelper/
+*.debhelper
+*.debhelper.log
+*.substvars
+sonic-netconf/
+sonic-netconf-dbg/
+tmp/
+files
