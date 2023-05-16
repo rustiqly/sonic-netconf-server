@@ -11,9 +11,9 @@ Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}  
 Description: SONiC Netconf Server 
 
-Package: sonic-netconf-dbg
+Package: sonic-netconf-server-dbg
 Priority: extra
 Architecture: any
 Section: debug
-Depends: sonic-netconf (=${binary:Version})
+Depends: sonic-netconf-server (=${binary:Version})
 Description: debugging symbols for SONiC Netconf Server

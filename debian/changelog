@@ -1,5 +1,5 @@
-sonic-netconf (1.0-01) UNRELEASED; urgency=low
+sonic-netconf-server (1.0-01) UNRELEASED; urgency=low
 
   * Initial release.
 
- -- Hossam Hassan <hossam4.hassan.ext@orange.com>  Wed, 28 December 2022 00:25:19 +0000
+ -- Hossam Hassan <hossam4.hassan.ext@orange.com>  Wed, 28 Dec 2022 00:25:19 +0000

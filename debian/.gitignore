@@ -2,7 +2,7 @@
 *.debhelper
 *.debhelper.log
 *.substvars
-sonic-netconf/
-sonic-netconf-dbg/
+sonic-netconf-server/
+sonic-netconf-server-dbg/
 tmp/
 files

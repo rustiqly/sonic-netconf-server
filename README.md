@@ -17,8 +17,8 @@ Please note that the build instruction in this guide has only been tested on Ubu
 4. make init
 5. make configure PLATFORM=broadcom
 6. Run the prefetch python script to download all binaries (see below for the script).
-7. To build sonic-netconf container:   
-	`BLDENV=stretch make target/docker-sonic-netconf.gz`
+7. To build sonic-netconf-server container:   
+	`BLDENV=stretch make target/docker-sonic-netconf-server.gz`
 8. To build Debian Stretch, if not already downloaded:   
 	`BLDENV=stretch make stretch`
 9. To build the ONIE installer:   
@@ -79,12 +79,12 @@ Here is a python script you could use to fetch latest prebuilt objects (deb, gz,
 ##### Incremental builds 
 Just clean up the deb's/gz that require re-build, and build again. Here is an exmple:
 
-##### To build deb file for sonic-netconf
+##### To build deb file for sonic-netconf-server
 
-	BLDENV=stretch make target/debs/stretch/sonic-netconf_1.0-01_amd64.deb-clean
-	BLDENV=stretch make target/debs/stretch/sonic-netconf_1.0-01_amd64.deb
+	BLDENV=stretch make target/debs/stretch/sonic-netconf-server_1.0-01_amd64.deb-clean
+	BLDENV=stretch make target/debs/stretch/sonic-netconf-server_1.0-01_amd64.deb
 	
-##### To build sonic-netconf docker alone
+##### To build sonic-netconf-server docker alone
 
-	BLDENV=stretch make target/docker-sonic-netconf.gz-clean
-	BLDENV=stretch make target/docker-sonic-netconf.gz
+	BLDENV=stretch make target/docker-sonic-netconf-server.gz-clean
+	BLDENV=stretch make target/docker-sonic-netconf-server.gz
