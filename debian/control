@@ -1,11 +1,11 @@
-Source: sonic-netconf 
+Source: sonic-netconf-server
 Maintainer: Hossam Hassan <hossam4.hassan.ext@orange.com>
 Build-Depends: debhelper (>= 8.0.0),
                dh-systemd
 Standards-Version: 3.9.3
 Section: net
 
-Package: sonic-netconf 
+Package: sonic-netconf-server
 Priority: extra  
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}  
