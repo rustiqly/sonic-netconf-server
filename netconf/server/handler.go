@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/sonic-mgmt-framework/lib"
+	"sonic-netconf/lib"
+
 	"github.com/antchfx/xmlquery"
 	"github.com/gliderlabs/ssh"
 	"github.com/golang/glog"

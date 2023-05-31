@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Azure/sonic-mgmt-framework/build/netconf_codegen"
+	"sonic-netconf/build/netconf_codegen"
+
 	"github.com/antchfx/xmlquery"
 	"github.com/golang/glog"
 )
@@ -18,12 +19,17 @@ type Config struct {
 	payload   map[string]interface{}
 	keys      int
 }
+
+type GetRequest struct {
+	path 		string
+	filters 	[]string
+}
 type RPCRequest struct {
 	path    string
 	payload map[string]interface{}
 }
 
-func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]string, error) {
+func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]GetRequest, error) {
 	// TODO: check source tag for config source, for now assume always running config
 	// TODO: request path creation assumes parent -> one child structure in filter tag, validation required
 
@@ -33,10 +39,10 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]string, error) {
 	filterNode := xmlquery.FindOne(node, "//filter")
 
 	if filterNode == nil {
-		return []string{}, errors.New("Need filter element, can't return all configuration for now")
+		return []GetRequest{}, errors.New("Need filter element, can't return all configuration for now")
 	}
 
-	queryPaths := []string{}
+	queryPaths := []GetRequest{}
 
 	// create base url i.e modelname
 	containers := xmlquery.Find(filterNode, "./*") // get child node
@@ -46,27 +52,28 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]string, error) {
 		glog.Infof("Parsing for model %s started", modelContainer.Data)
 
 		// Single request
-		path := "/" + modelContainer.Data + ":" + modelContainer.Data //translib path building
-		glog.Infof("Path updated %s", path)
+		mainPath := "/" + modelContainer.Data + ":" + modelContainer.Data //translib path building
+		glog.Infof("Main path updated %s", mainPath)
 
 		// inner containers
 		innerContainers := xmlquery.Find(modelContainer, "./*")
 
 		if len(innerContainers) == 0 {
 			glog.Info("main container Children are zero, appending")
-			queryPaths = append(queryPaths, path)
+			queryPaths = append(queryPaths, GetRequest{path: mainPath, filters: []string{}})
 			continue
 		}
 
 		// Handler inner container
 		for _, innerContainer := range xmlquery.Find(modelContainer, "./*") {
 
+			glog.Infof("Inner container %+v", innerContainer)
 			if innerContainer == nil {
-				queryPaths = append(queryPaths, path)
+				queryPaths = append(queryPaths, GetRequest{path: mainPath, filters: []string{}})
 				continue
 			}
 
-			path += "/" + innerContainer.Data
+			path := mainPath + "/" + innerContainer.Data
 			glog.Infof("Path updated %s", path)
 
 			// Handle each "list" inside innerContainer
@@ -76,7 +83,7 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]string, error) {
 
 			if len(children) == 0 {
 				glog.Info("inner container Children are zero, appending")
-				queryPaths = append(queryPaths, path)
+				queryPaths = append(queryPaths, GetRequest{path: path, filters: []string{}})
 				continue
 			}
 
@@ -99,17 +106,33 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]string, error) {
 
 				glog.Infof("Searching for keys and updating path")
 
+				listFilters := []string{}
+
 				for _, key := range keys {
-					keyNode := xmlquery.FindOne(child, "//*[local-name() = '"+key+"']/text()")
+					keyNode := xmlquery.FindOne(child, "//*[local-name() = '"+key+"']")
+					
 					if keyNode != nil {
-						innerPath += "[" + key + "=" + fmt.Sprintf("%v", strings.TrimSpace(keyNode.Data)) + "]"
-						glog.Infof("Path updated %s", innerPath)
-					} else {
-						return []string{}, errors.New("LIST :(" + child.Data + ") missing key:" + key)
+						glog.Infof("Keynode %s found %+v", key, keyNode)
+
+						dataNode := xmlquery.FindOne(child, "//*[local-name() = '"+key+"']/text()")
+
+						if dataNode != nil {
+							innerPath += "[" + key + "=" + fmt.Sprintf("%v", strings.TrimSpace(dataNode.Data)) + "]"
+							glog.Infof("Path updated %s", innerPath)
+						}else{
+							glog.Infof("Key [%s] data is empty, should be used as list filter", key)
+							listFilters = append(listFilters, key)
+						}
 					}
 				}
 
-				queryPaths = append(queryPaths, innerPath)
+				glog.Infof("Filters for list %+s %+v", child.Data, listFilters)
+
+				// if keysFound == 0 {
+				// 	glog.Infof("List level request without any keys, returning entire list")
+				// }
+
+				queryPaths = append(queryPaths, GetRequest{path: innerPath, filters: listFilters})
 			}
 
 			glog.Infof("Parsing for model %s ended", modelContainer.Data)

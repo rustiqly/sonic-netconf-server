@@ -11,9 +11,10 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/Azure/sonic-mgmt-framework/lib"
-	"github.com/Azure/sonic-mgmt-framework/netconf/server"
-	"github.com/Azure/sonic-mgmt-framework/tacplus"
+	"sonic-netconf/lib"
+	"sonic-netconf/netconf/server"
+	"sonic-netconf/tacplus"
+
 	gliderssh "github.com/gliderlabs/ssh"
 	"github.com/go-redis/redis/v7"
 	"github.com/golang/glog"

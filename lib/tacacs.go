@@ -3,10 +3,9 @@ package lib
 import (
 	"context"
 	"errors"
+	"sonic-netconf/tacplus"
 	"strconv"
 	"time"
-
-	"github.com/Azure/sonic-mgmt-framework/tacplus"
 )
 
 type TacacsAuthenticator struct {
