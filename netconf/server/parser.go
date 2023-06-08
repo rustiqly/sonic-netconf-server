@@ -143,7 +143,7 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]GetRequest, error) 
 	glog.Infof("Paths found in get request", queryPaths)
 
 	return queryPaths, nil
-}
+} 
 
 func ParseGetSchemaRequest(node *xmlquery.Node) (GetSchema, error) {
 	identifier := xmlquery.FindOne(node, "//identifier/text()")
@@ -173,7 +173,7 @@ func ParseEditRequest(node *xmlquery.Node) ([]Config, error) {
 	// get target
 	targetNode := xmlquery.FindOne(node, "//*[local-name() = 'target']/*")
 	if targetNode == nil {
-		return []Config{}, errors.New("target unsepecified")
+		return []Config{}, errors.New("target store unsepecified")
 	}
 
 	if targetNode.Data != "candidate" {
@@ -237,16 +237,16 @@ func extractTransactionalRequestByOpTag2(node *xmlquery.Node, opTag string) ([]C
 
 	for _, modelContainer := range containers {
 
+		var config Config
+		config.operation = opTag
+		config.payload = make(map[string]interface{})
+
+		config.path = "/" + modelContainer.Data + ":" + modelContainer.Data //translib path building
+
 		// Handle inner container
 		for _, innerContainer := range xmlquery.Find(modelContainer, "./*") {
-
-			var config Config
-			config.operation = opTag
-			config.payload = make(map[string]interface{})
 	
 			// Handle outer container
-			config.path = "/" + modelContainer.Data + ":" + modelContainer.Data //translib path building
-
 			innerContainerPayload := make(map[string][]interface{})
 
 			// Handle each "list" inside innerContainer
@@ -292,14 +292,11 @@ func extractTransactionalRequestByOpTag2(node *xmlquery.Node, opTag string) ([]C
 
 			if len(innerContainerPayload) != 0 {
 				config.payload[modelContainer.Data+":"+innerContainer.Data] = innerContainerPayload
-				configs = append(configs, config)
 			}
 		}
-	}
 
-	// if len(config.payload) != 0 {
-	// 	return config, errors.New("No requests match " + opTag + " operation")
-	// }
+		configs = append(configs, config)
+	}
 
 	return configs, nil
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"sonic-netconf/build/netconf_codegen"
 	"sonic-netconf/lib"
@@ -18,6 +19,7 @@ import (
 	"github.com/antchfx/xmlquery"
 	"github.com/clbanning/mxj/v2"
 	"github.com/gliderlabs/ssh"
+	"github.com/go-redis/redis/v7"
 	"github.com/golang/glog"
 )
 
@@ -25,7 +27,17 @@ var (
 	YangSchemas map[string][]Schema
 	YangModules ModulesState
 	read        = false
+	redisClient	*redis.Client
 )
+
+func init() {
+	redisClient = redis.NewClient(&redis.Options{
+		Network:  "unix",
+		Addr:     "/var/run/redis/redis.sock",
+		Password: "",
+		DB:       4,
+	})
+}
 
 func readYangModules() {
 	// return all schemas in module form
@@ -408,6 +420,21 @@ func prepareSchemasReply(st State) string {
 
 func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
 
+	exists, err := redisClient.Exists("CONFIG_LOCK").Result()
+
+	if err != nil {
+		return "", err
+	}
+
+	lockId, err := redisClient.Get("CONFIG_LOCK").Result()
+
+	glog.Infof("Datastore lock info exists %+v, lock %+v, err %+v", exists, lockId, err)
+
+	if exists == 1 && lockId != context.Value("uuid") {
+		// There is a lock, and it is not owned by current session
+		return "", errors.New("Datastore locked")
+	}
+
 	configs, err := ParseEditRequest(rootNode)
 
 	glog.Infof("Configs extracted %+v", configs)
@@ -466,6 +493,107 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 	// glog.Infof("[TACPLUS] accounting passed - edit-config: %s", args)
 
 	return "ok", nil
+}
+
+func lockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+
+	// Parser to get Target node
+	targetNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'target']/*")
+	if targetNode == nil {
+		return "", errors.New("target store unsepecified")
+	}
+
+	if targetNode.Data != "candidate" {
+		return "", errors.New("Target must be candidate config for now")
+	}
+
+	// lockDuration := 10 // default
+
+	// durationNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'duration']/*")
+
+	// glog.Infof("Duration node", durationNode)
+	// glog.Infof("duration input", durationNode.Data)
+
+	// if durationNode != nil {
+	// 	inputduration, err := strconv.Atoi(durationNode.Data)
+
+	// 	if err != nil {
+	// 		return "", errors.New("Unable to parse duration")
+	// 	}
+
+	// 	lockDuration = inputduration
+	// }
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize("lock", "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %+s", "lock"))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %+s", "lock")
+
+	lockAcquired, _ := redisClient.SetNX("CONFIG_LOCK", context.Value("uuid"), 15 * time.Second).Result()
+
+	if !lockAcquired {
+		return "", errors.New("Lock failed, lock is already held")
+	}
+
+	resultStr := "ok"
+
+	// Account
+	if !authenticator.Account("get", "") {
+		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed lock - args:%s", ""))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - lock: %s", "")
+
+	return resultStr, nil
+}
+
+func unlockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+	// Parser to get Target node
+	targetNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'target']/*")
+	if targetNode == nil {
+		return "", errors.New("target store unsepecified")
+	}
+
+	if targetNode.Data != "candidate" {
+		return "", errors.New("Target must be candidate config for now")
+	}
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize("unlock", "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %+s", "unlock"))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %+s", "lock")
+
+	lock, err := redisClient.Get("CONFIG_LOCK").Result()
+
+	if err == redis.Nil {
+		return "", errors.New("No active lock")
+	}
+
+	if err != nil {
+		return "", errors.New("Unhandled redis error")
+	}
+
+	if lock != context.Value("uuid") {
+		return "", errors.New("Current session doesn't own active lock")
+	}
+
+	redisClient.Del("CONFIG_LOCK")
+
+	// Account
+	if !authenticator.Account("unlock", "") {
+		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed unlock - args:%s", ""))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - unlock: %s", "")
+
+	return "ok", nil
+
 }
 
 func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
