@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"sonic-netconf/build/netconf_codegen"
+	"orange/sonic-netconf-server/build/netconf_codegen"
 
 	"github.com/antchfx/xmlquery"
 	"github.com/golang/glog"

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"sonic-netconf/build/netconf_codegen"
-	"sonic-netconf/lib"
+	"orange/sonic-netconf-server/build/netconf_codegen"
+	"orange/sonic-netconf-server/lib"
 
 	"github.com/Azure/sonic-mgmt-common/translib"
 	"github.com/antchfx/xmlquery"

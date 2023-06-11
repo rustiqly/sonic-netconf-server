@@ -11,9 +11,9 @@ import (
 	"os"
 	"strconv"
 
-	"sonic-netconf/lib"
-	"sonic-netconf/netconf/server"
-	"sonic-netconf/tacplus"
+	"orange/sonic-netconf-server/lib"
+	"orange/sonic-netconf-server/netconf/server"
+	"orange/sonic-netconf-server/tacplus"
 
 	gliderssh "github.com/gliderlabs/ssh"
 	"github.com/go-redis/redis/v7"
