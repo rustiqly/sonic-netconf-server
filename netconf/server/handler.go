@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"sonic-netconf/lib"
+	"orange/sonic-netconf-server/lib"
 
 	"github.com/antchfx/xmlquery"
 	"github.com/gliderlabs/ssh"

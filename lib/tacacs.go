@@ -3,7 +3,7 @@ package lib
 import (
 	"context"
 	"errors"
-	"sonic-netconf/tacplus"
+	"orange/sonic-netconf-server/tacplus"
 	"strconv"
 	"time"
 )
