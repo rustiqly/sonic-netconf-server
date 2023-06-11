@@ -11,13 +11,16 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/Azure/sonic-mgmt-framework/lib"
-	"github.com/Azure/sonic-mgmt-framework/netconf/server"
-	"github.com/Azure/sonic-mgmt-framework/tacplus"
+	"sonic-netconf/lib"
+	"sonic-netconf/netconf/server"
+	"sonic-netconf/tacplus"
+
 	gliderssh "github.com/gliderlabs/ssh"
 	"github.com/go-redis/redis/v7"
 	"github.com/golang/glog"
 	cryptossh "golang.org/x/crypto/ssh"
+
+	"github.com/google/uuid"
 )
 
 // Command line parameters
@@ -107,6 +110,7 @@ func authenticate(ctx gliderssh.Context, password string) bool {
 		ctx.SetValue("auth", pamAuthenticator)
 	}
 
+	ctx.SetValue("uuid", uuid.New().String())
 	glog.Infof("Authentication success user:(%s)", ctx.User())
 	return true
 }

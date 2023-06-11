@@ -10,13 +10,16 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
+
+	"sonic-netconf/build/netconf_codegen"
+	"sonic-netconf/lib"
 
 	"github.com/Azure/sonic-mgmt-common/translib"
-	"github.com/Azure/sonic-mgmt-framework/build/netconf_codegen"
-	"github.com/Azure/sonic-mgmt-framework/lib"
 	"github.com/antchfx/xmlquery"
 	"github.com/clbanning/mxj/v2"
 	"github.com/gliderlabs/ssh"
+	"github.com/go-redis/redis/v7"
 	"github.com/golang/glog"
 )
 
@@ -24,7 +27,17 @@ var (
 	YangSchemas map[string][]Schema
 	YangModules ModulesState
 	read        = false
+	redisClient	*redis.Client
 )
+
+func init() {
+	redisClient = redis.NewClient(&redis.Options{
+		Network:  "unix",
+		Addr:     "/var/run/redis/redis.sock",
+		Password: "",
+		DB:       4,
+	})
+}
 
 func readYangModules() {
 	// return all schemas in module form
@@ -80,7 +93,7 @@ func readYangModules() {
 
 func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
 
-	paths, err := ParseGetRequest(rootNode, false)
+	requests, err := ParseGetRequest(rootNode, false)
 
 	if err != nil {
 		return "", err
@@ -88,27 +101,27 @@ func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 
 	authenticator := context.Value("auth").(lib.Authenticator)
 
-	for _, path := range paths {
+	for _, request := range requests {
 		// Authorize
-		if !authenticator.Authorize("get", path) {
-			return "", errors.New(fmt.Sprintf("Unauthorized access %s", path))
+		if !authenticator.Authorize("get", request.path) {
+			return "", errors.New(fmt.Sprintf("Unauthorized access %+s", request.path))
 		}
-		glog.Infof("[TACPLUS] authorization passed %s", path)
+		glog.Infof("[TACPLUS] authorization passed %+s", request.path)
 	}
 
 	resultStr := "<data>"
 
 	args := ""
-	for _, path := range paths {
+	for _, request := range requests {
 
-		pathResult, err := innerGetHandler(rootNode, path)
+		pathResult, err := innerGetHandler(rootNode, request)
 
 		if err != nil {
 			return "", errors.New("Failed to handle request")
 		}
 
 		resultStr += pathResult
-		args += path + ", "
+		args += request.path + ", "
 	}
 
 	// Account
@@ -123,9 +136,9 @@ func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 	return resultStr, nil
 }
 
-func innerGetHandler(rootNode *xmlquery.Node, path string) (string, error) {
+func innerGetHandler(rootNode *xmlquery.Node, request GetRequest) (string, error) {
 
-	switch path {
+	switch request.path {
 	case "/modules-state:modules-state":
 		response, err := xml.MarshalIndent(YangModules, "", "   ")
 		if err != nil {
@@ -134,12 +147,12 @@ func innerGetHandler(rootNode *xmlquery.Node, path string) (string, error) {
 		resStr := string(response)
 		return resStr, nil
 	case "/netconf-state:netconf-state/schemas":
-		path, _ := ParseGetRequest(rootNode, true)
-		return getSchemas(path[0]), nil
+		requests, _ := ParseGetRequest(rootNode, true)
+		return getSchemas(requests[0].path), nil
 	case "/operation:operation":
 		return "", nil
 	default:
-		req := translib.GetRequest{Path: path}
+		req := translib.GetRequest{Path: request.path}
 		resp, err1 := translib.Get(req)
 		if err1 == nil {
 			translibResponse := string(resp.Payload)
@@ -158,7 +171,7 @@ func innerGetHandler(rootNode *xmlquery.Node, path string) (string, error) {
 			r2 := regexp.MustCompile("(\\S+):(\\S+)")
 			s2 := r2.FindStringSubmatch(s[1])
 
-			if len(s) == 0 {
+			if len(s2) == 0 {
 				return "", errors.New("Translib parsing error [2]")
 			}
 
@@ -169,11 +182,22 @@ func innerGetHandler(rootNode *xmlquery.Node, path string) (string, error) {
 				translibResponse = "{\"" + s2[1] + "\":" + translibResponse + "}"
 			}
 
+			if len(request.filters) != 0 {
+				glog.Infof("Filtering translib response %+s with filters %+v", translibResponse, request.filters)
+				filteredResponse, err := filterJson(translibResponse, request)
+				if err != nil {
+					glog.Infof("Unable to filter response %+v", err)
+					return "", errors.New("Unable to parse request [3]")
+				}
+				glog.Infof("Filtered response %+s", filteredResponse)
+				translibResponse = filteredResponse
+			}
+
 			// Convert to xml
 			jsonConv, _ := mxj.NewMapJson([]byte(translibResponse))
 			xmlPayload, _ := jsonConv.Xml()
 
-			xmlPayload = reorderKeys(path, xmlPayload)
+			xmlPayload = reorderKeys(request.path, xmlPayload)
 
 			resultStr := string(xmlPayload)
 
@@ -185,6 +209,62 @@ func innerGetHandler(rootNode *xmlquery.Node, path string) (string, error) {
 	}
 
 	return "", nil
+}
+
+func filterJson(input string, request GetRequest) (string, error) {
+
+	// Filters are always applied on lists
+
+	glog.Infof("Filtering input %+s with filters %+v", input, request.filters)
+
+	var i interface{}
+    if err := json.Unmarshal([]byte(input), &i); err != nil {
+        panic(err)
+    }
+
+	// This logic needs a refactor, o(n^5) horrible complexity
+	for _, container := range i.(map[string]interface{}) {
+		// Container level
+		for listKey, list := range container.(map[string]interface{}){
+			glog.Infof("List key %+v, list %+v", listKey, list)
+
+			r := regexp.MustCompile("/.*/.*/(\\S+)")
+			s := r.FindStringSubmatch(request.path)
+
+			if len(s) == 0 {
+				return "", errors.New("Failed to get list name")
+			}
+
+			listName := s[1]
+
+			if listName == listKey {
+				// This list has a filter, apply it.
+				arr, ok := list.([]interface{})
+				if ok {
+					for _, arrObj := range arr {
+						// Iterate over each element of the obj to see if we need to filter it
+						aa := arrObj.(map[string]interface{})
+						
+						for k, _ := range aa {
+							// Check if the key exist in the filter, if so keep it. Delete anything else
+							for _, a := range request.filters {
+								if k != a {
+									delete(aa, k)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+    output, err := json.Marshal(i)
+    if err != nil {
+        panic(err)
+    }
+
+	return string(output), nil
 }
 
 func reorderKeys(path string, xml []byte) []byte {
@@ -340,6 +420,21 @@ func prepareSchemasReply(st State) string {
 
 func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
 
+	exists, err := redisClient.Exists("CONFIG_LOCK").Result()
+
+	if err != nil {
+		return "", err
+	}
+
+	lockId, err := redisClient.Get("CONFIG_LOCK").Result()
+
+	glog.Infof("Datastore lock info exists %+v, lock %+v, err %+v", exists, lockId, err)
+
+	if exists == 1 && lockId != context.Value("uuid") {
+		// There is a lock, and it is not owned by current session
+		return "", errors.New("Datastore locked")
+	}
+
 	configs, err := ParseEditRequest(rootNode)
 
 	glog.Infof("Configs extracted %+v", configs)
@@ -398,6 +493,107 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 	// glog.Infof("[TACPLUS] accounting passed - edit-config: %s", args)
 
 	return "ok", nil
+}
+
+func lockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+
+	// Parser to get Target node
+	targetNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'target']/*")
+	if targetNode == nil {
+		return "", errors.New("target store unsepecified")
+	}
+
+	if targetNode.Data != "candidate" {
+		return "", errors.New("Target must be candidate config for now")
+	}
+
+	// lockDuration := 10 // default
+
+	// durationNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'duration']/*")
+
+	// glog.Infof("Duration node", durationNode)
+	// glog.Infof("duration input", durationNode.Data)
+
+	// if durationNode != nil {
+	// 	inputduration, err := strconv.Atoi(durationNode.Data)
+
+	// 	if err != nil {
+	// 		return "", errors.New("Unable to parse duration")
+	// 	}
+
+	// 	lockDuration = inputduration
+	// }
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize("lock", "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %+s", "lock"))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %+s", "lock")
+
+	lockAcquired, _ := redisClient.SetNX("CONFIG_LOCK", context.Value("uuid"), 15 * time.Second).Result()
+
+	if !lockAcquired {
+		return "", errors.New("Lock failed, lock is already held")
+	}
+
+	resultStr := "ok"
+
+	// Account
+	if !authenticator.Account("get", "") {
+		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed lock - args:%s", ""))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - lock: %s", "")
+
+	return resultStr, nil
+}
+
+func unlockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+	// Parser to get Target node
+	targetNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'target']/*")
+	if targetNode == nil {
+		return "", errors.New("target store unsepecified")
+	}
+
+	if targetNode.Data != "candidate" {
+		return "", errors.New("Target must be candidate config for now")
+	}
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize("unlock", "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %+s", "unlock"))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %+s", "lock")
+
+	lock, err := redisClient.Get("CONFIG_LOCK").Result()
+
+	if err == redis.Nil {
+		return "", errors.New("No active lock")
+	}
+
+	if err != nil {
+		return "", errors.New("Unhandled redis error")
+	}
+
+	if lock != context.Value("uuid") {
+		return "", errors.New("Current session doesn't own active lock")
+	}
+
+	redisClient.Del("CONFIG_LOCK")
+
+	// Account
+	if !authenticator.Account("unlock", "") {
+		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed unlock - args:%s", ""))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - unlock: %s", "")
+
+	return "ok", nil
+
 }
 
 func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {

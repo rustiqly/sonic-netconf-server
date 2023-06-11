@@ -33,7 +33,7 @@ export TOPDIR MGMT_COMMON_DIR GO GOPATH
 all: netconf
 
 $(GO_MOD):
-	$(GO) mod init github.com/Azure/sonic-mgmt-framework
+	$(GO) mod init github.com/Azure/sonic-netconf
 
 $(GO_DEPS): $(GO_MOD)
 	$(MAKE) -C models -f openapi_codegen.mk go-server-init

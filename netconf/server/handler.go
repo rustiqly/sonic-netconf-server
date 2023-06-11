@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Azure/sonic-mgmt-framework/lib"
+	"sonic-netconf/lib"
+
 	"github.com/antchfx/xmlquery"
 	"github.com/gliderlabs/ssh"
 	"github.com/golang/glog"
@@ -157,13 +158,9 @@ func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, err
 			return "ok", nil
 		})
 	case "lock":
-		return withAuth(context, "lock", func() (string, error) {
-			return "ok", nil
-		})
+		return lockRequestHandler(context, requestNode)
 	case "unlock":
-		return withAuth(context, "unlock", func() (string, error) {
-			return "ok", nil
-		})
+		return unlockRequestHandler(context, requestNode)
 	case "sonic-rpc":
 		response, err = RpcRequestHandler(context, requestNode)
 	default:
