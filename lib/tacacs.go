@@ -3,9 +3,12 @@ package lib
 import (
 	"context"
 	"errors"
-	"orange/sonic-netconf-server/tacplus"
 	"strconv"
 	"time"
+
+	"orange/sonic-netconf-server/tacplus"
+
+	"github.com/golang/glog"
 )
 
 type TacacsAuthenticator struct {
@@ -69,11 +72,39 @@ func (t TacacsAuthenticator) Authenticate() bool {
 		RemAddr:       t.remoteAddress,
 	}
 
-	authenRep, _, err := t.client.SendAuthenStart(t.context, authenReq)
+	authenRep, session, err := t.client.SendAuthenStart(t.context, authenReq)
 
-	if err != nil || authenRep.Status != tacplus.AuthenStatusPass {
+	if err != nil {
 		return false
 	}
+
+	if authenRep.Status == tacplus.AuthenStatusGetPass {
+		// Get password request
+		glog.Infof("Send password packet received, resending password with session: %+v", session)
+
+		if session != nil {
+			authenRep, err = session.Continue(t.context, t.password)
+		}
+
+		if err != nil {
+			return false
+		}
+
+	}
+
+	if authenRep.Status != tacplus.AuthenStatusPass{
+		glog.Infof("Success packet not received, authentication failed")
+		return false
+	}
+
+	
+	// if err != nil || authenRep.Status != tacplus.AuthenStatusPass {
+	// 	return false
+	// }
+
+	// glog.Infof("Session from authentication %+v", session)
+
+	// authenRep, err = session.Continue(t.context, t.password)
 
 	return true
 }
