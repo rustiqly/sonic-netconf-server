@@ -503,8 +503,8 @@ func lockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		return "", errors.New("target store unsepecified")
 	}
 
-	if targetNode.Data != "candidate" {
-		return "", errors.New("Target must be candidate config for now")
+	if targetNode.Data != "running" {
+		return "", errors.New("Target must be running config")
 	}
 
 	// lockDuration := 10 // default
@@ -557,8 +557,8 @@ func unlockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 		return "", errors.New("target store unsepecified")
 	}
 
-	if targetNode.Data != "candidate" {
-		return "", errors.New("Target must be candidate config for now")
+	if targetNode.Data != "running" {
+		return "", errors.New("Target must be running config")
 	}
 
 	authenticator := context.Value("auth").(lib.Authenticator)
@@ -616,6 +616,10 @@ func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 	}
 
 	return "ok", nil
+}
+
+func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(string,error){
+
 }
 
 func Reverse(s []string) []string {

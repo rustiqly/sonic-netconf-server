@@ -60,7 +60,7 @@ func capabilitesXML() string {
 	serverHello.Capabilities = append(serverHello.Capabilities, CapNetconf10)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapNetconf11)
 
-	serverHello.Capabilities = append(serverHello.Capabilities, CapCandidate)
+	serverHello.Capabilities = append(serverHello.Capabilities, CapWritableRunning)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapXPath)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapMonitoring)
 
@@ -163,6 +163,8 @@ func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, err
 		return unlockRequestHandler(context, requestNode)
 	case "sonic-rpc":
 		response, err = RpcRequestHandler(context, requestNode)
+	case "copy-config":
+		return copyConfigRequestHandler(context,requestNode)
 	default:
 		return "", errors.New("Unsupported command")
 	}
