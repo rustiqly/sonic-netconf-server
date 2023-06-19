@@ -8,6 +8,7 @@ import (
 	"html"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -618,8 +619,74 @@ func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 	return "ok", nil
 }
 
+func commitRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error){
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize("commit", "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %s", "commit"))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %s", "commit")
+
+	saveConfig()
+
+	if !authenticator.Account("commit", "") {
+		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", "commit"))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - %s", "commit")
+
+	return "ok", nil
+}
+
 func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(string,error){
 
+	targetNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'target']/*")
+	if targetNode == nil {
+		return "", errors.New("target store unsepecified")
+	}
+
+	if targetNode.Data != "startup" {
+		return "", errors.New("Target must be startup config")
+	}
+
+	sourceNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'source']/*")
+	if sourceNode == nil {
+		return "", errors.New("source store unsepecified")
+	}
+
+	if sourceNode.Data != "running" {
+		return "", errors.New("Source must be running config")
+	}
+
+	authenticator := context.Value("auth").(lib.Authenticator)
+
+	if !authenticator.Authorize("copy-config", "") {
+		return "", errors.New(fmt.Sprintf("Unauthorized access %s", "copy-config"))
+	}
+
+	glog.Infof("[TACPLUS] authorization passed %s", "copy-config")
+
+	saveConfig()
+
+	if !authenticator.Account("copy-config", "") {
+		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", "copy-config"))
+	}
+
+	glog.Infof("[TACPLUS] accounting passed - %s", "copy-config")
+
+	return "ok", nil
+
+}
+
+func saveConfig() {
+	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
+	_, err := exec.Command("bash", args...).Output()
+
+	if err != nil {
+		glog.Error("Config save failed, configuration will not persist")
+	}
 }
 
 func Reverse(s []string) []string {
