@@ -1,15 +1,21 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"io/ioutil"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -629,7 +635,11 @@ func commitRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 
 	glog.Infof("[TACPLUS] authorization passed %s", "commit")
 
-	saveConfig()
+	err := saveConfig()
+
+	if err != nil {
+		return "", errors.New("Unable to commit changes made, configuration will not persist")
+	}
 
 	if !authenticator.Account("commit", "") {
 		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", "commit"))
@@ -647,17 +657,9 @@ func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(stri
 		return "", errors.New("target store unsepecified")
 	}
 
-	if targetNode.Data != "startup" {
-		return "", errors.New("Target must be startup config")
-	}
-
 	sourceNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'source']/*")
 	if sourceNode == nil {
 		return "", errors.New("source store unsepecified")
-	}
-
-	if sourceNode.Data != "running" {
-		return "", errors.New("Source must be running config")
 	}
 
 	authenticator := context.Value("auth").(lib.Authenticator)
@@ -668,7 +670,28 @@ func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(stri
 
 	glog.Infof("[TACPLUS] authorization passed %s", "copy-config")
 
-	saveConfig()
+	if targetNode.Data == "startup" && sourceNode.Data == "running" {
+		// Copy run start
+		err := saveConfig()
+		if err != nil {
+			return "", errors.New("Unable to copy running store to startup store, configuration will not persist after reboot")
+		}
+	} else if targetNode.Data == "url" && sourceNode.Data == "startup" {
+		// Backup startup config to a url
+		glog.Info("Bakcup startup to url")
+
+		urlNode := xmlquery.FindOne(targetNode, "//*[local-name() = 'url']/text()")
+		if urlNode == nil {
+			return "", errors.New("Unable to parse url tag")
+		}
+
+		if err := UploadFile("/etc/sonic/config_db.json", urlNode.Data); err != nil {
+			return "", err
+		}
+
+	} else {
+		return "" ,errors.New("Unsupported combination of source and target nodes")
+	}
 
 	if !authenticator.Account("copy-config", "") {
 		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", "copy-config"))
@@ -680,13 +703,63 @@ func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(stri
 
 }
 
-func saveConfig() {
-	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
-	_, err := exec.Command("bash", args...).Output()
+func UploadFile(path string, targetUrl string) error {
+
+	form := new(bytes.Buffer)
+	writer := multipart.NewWriter(form)
+
+	fw, err := writer.CreateFormFile("files", filepath.Base(path))
+	if err != nil {
+		return err
+	}
+
+	fd, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	defer fd.Close()
+	_, err = io.Copy(fw, fd)
+	if err != nil {
+		return err
+	}
+
+	writer.Close()
+
+	client := &http.Client{}
+
+	req, err := http.NewRequest("POST", targetUrl, form)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	// req.SetBasicAuth(username, password)
+	resp, err := client.Do(req)
 
 	if err != nil {
-		glog.Error("Config save failed, configuration will not persist")
+		return err
 	}
+
+	defer resp.Body.Close()
+
+	bodyText, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 204 {
+		return errors.New("Upload request returned an invalid status code: [" + strconv.Itoa(resp.StatusCode) + "]")
+	}
+
+	glog.Infof("Sucessfull upload request response %+s", bodyText)
+	return nil
+}
+
+func saveConfig() error {
+	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
+	_, err := exec.Command("bash", args...).Output()
+	return err
 }
 
 func Reverse(s []string) []string {
