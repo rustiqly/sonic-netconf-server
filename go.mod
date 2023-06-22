@@ -2,7 +2,7 @@ module orange/sonic-netconf-server
 
 require (
 	github.com/Azure/sonic-mgmt-common v0.0.0-20220120155510-515652700481
-	github.com/Azure/sonic-mgmt-framework v0.0.0-20230515200928-1303b05a0e64 // indirect
+	github.com/Azure/sonic-mgmt-framework v0.0.0-20230515200928-1303b05a0e64
 	github.com/antchfx/xmlquery v1.3.1
 	github.com/clbanning/mxj/v2 v2.3.2
 	github.com/gliderlabs/ssh v0.3.3

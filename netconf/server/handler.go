@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
@@ -60,7 +59,7 @@ func capabilitesXML() string {
 	serverHello.Capabilities = append(serverHello.Capabilities, CapNetconf10)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapNetconf11)
 
-	serverHello.Capabilities = append(serverHello.Capabilities, CapCandidate)
+	serverHello.Capabilities = append(serverHello.Capabilities, CapWritableRunning)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapXPath)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapMonitoring)
 
@@ -146,7 +145,7 @@ func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, err
 	case "get-schema":
 		response, err = withAuth(context, "get-schema", func() (string, error) { return FilterSchemaHandler(requestNode) })
 	case "commit":
-		return withAuth(context, "commit", func() (string, error) { saveConfig(); return "ok", nil })
+		response, err = commitRequestHandler(context, requestNode)
 	case "close-session":
 		return withAuth(context, "close-session", func() (string, error) {
 			if context.Value("auth-type").(string) == "tacacs" {
@@ -158,11 +157,13 @@ func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, err
 			return "ok", nil
 		})
 	case "lock":
-		return lockRequestHandler(context, requestNode)
+		response, err = lockRequestHandler(context, requestNode)
 	case "unlock":
-		return unlockRequestHandler(context, requestNode)
+		response, err = unlockRequestHandler(context, requestNode)
 	case "sonic-rpc":
 		response, err = RpcRequestHandler(context, requestNode)
+	case "copy-config":
+		response, err = copyConfigRequestHandler(context,requestNode)
 	default:
 		return "", errors.New("Unsupported command")
 	}
@@ -238,14 +239,7 @@ func SplitAt(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
-func saveConfig() {
-	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
-	_, err := exec.Command("bash", args...).Output()
 
-	if err != nil {
-		glog.Error("Config save failed, configuration will not persist")
-	}
-}
 
 func trimInput(input string) string {
 	trimmed := strings.Trim(string(input), "\n")

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/rand"
 	"net"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -74,7 +75,26 @@ func GetTacacsInfo() (PriorityQueue, error) {
 	if err == nil {
 
 		if pass, ok := tacacsGlobal["passkey"]; ok {
-			globalTacacsPass = pass
+
+			if encrypted, ok := tacacsGlobal["is_key_encrypted"]; ok && encrypted == "True" {
+
+				glog.Info("Tacacs key is encrypted, decrypting ...")
+
+				decrypted, err := exec.Command("bash", "-c" , "echo " + pass + " | " + "openssl enc -d -aes-256-cbc -base64 -pbkdf2 -pass file:/etc/sonic/enc_master_key").Output()
+
+				if err != nil {
+					glog.Infof("Unable execute decrypt openssl command")
+					return nil, errors.New("Cannot get tacacs server info")
+				}
+
+				glog.Infof("Decryption success")
+
+				globalTacacsPass = string(decrypted)
+
+			}else{
+				globalTacacsPass = pass
+			}
+
 		}
 
 		if authType, ok := tacacsGlobal["auth_type"]; ok {
@@ -114,7 +134,24 @@ func GetTacacsInfo() (PriorityQueue, error) {
 		}
 
 		if pass, ok := serverData["passkey"]; ok {
-			tacPassword = pass
+			if encrypted, ok := serverData["is_key_encrypted"]; ok && encrypted == "True" {
+
+				glog.Info("Tacacs key is encrypted, decrypting ...")
+
+				decrypted, err := exec.Command("bash", "-c" , "echo " + pass + " | " + "openssl enc -d -aes-256-cbc -base64 -pbkdf2 -pass file:/etc/sonic/enc_master_key").Output()
+
+				if err != nil {
+					glog.Infof("Unable execute decrypt openssl command")
+					return nil, errors.New("Cannot get tacacs server info")
+				}
+
+				glog.Infof("Decryption success")
+
+				tacPassword = string(decrypted)
+
+			}else{
+				tacPassword = pass
+			}
 		}
 
 		if authType, ok := serverData["auth_type"]; ok {

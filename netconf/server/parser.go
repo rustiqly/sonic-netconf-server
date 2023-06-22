@@ -176,8 +176,8 @@ func ParseEditRequest(node *xmlquery.Node) ([]Config, error) {
 		return []Config{}, errors.New("target store unsepecified")
 	}
 
-	if targetNode.Data != "candidate" {
-		return []Config{}, errors.New("Target must be candidate config for now")
+	if targetNode.Data != "running" {
+		return []Config{}, errors.New("Target must be running config")
 	}
 
 	var configs []Config

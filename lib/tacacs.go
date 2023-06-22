@@ -3,6 +3,7 @@ package lib
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strconv"
 	"time"
 
@@ -185,6 +186,15 @@ func (t TacacsAuthenticator) Account(cmd string, cmdArgs string) bool {
 	}
 
 	return true
+}
+
+func saveConfig() {
+	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
+	_, err := exec.Command("bash", args...).Output()
+
+	if err != nil {
+		glog.Error("Config save failed, configuration will not persist")
+	}
 }
 
 func (t TacacsAuthenticator) Disconnect() {
