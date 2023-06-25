@@ -62,6 +62,7 @@ func capabilitesXML() string {
 	serverHello.Capabilities = append(serverHello.Capabilities, CapWritableRunning)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapXPath)
 	serverHello.Capabilities = append(serverHello.Capabilities, CapMonitoring)
+	serverHello.Capabilities = append(serverHello.Capabilities, CapStartup)
 
 	if !read {
 		readYangModules()
