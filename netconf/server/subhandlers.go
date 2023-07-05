@@ -286,7 +286,7 @@ func reorderKeys(path string, xml []byte) []byte {
 			keysReversed[len(keys)-i-1] = k
 		}
 
-		if strings.Contains(k, path+"/") {
+		if strings.Contains(k, path+"/") || strings.Contains(path+"/", k) {
 
 			pathSplit := strings.Split(k, "/")
 
@@ -294,39 +294,53 @@ func reorderKeys(path string, xml []byte) []byte {
 			parent := pathSplit[2]
 			list := pathSplit[3]
 
-			if _, ok := arr[module].(map[string]interface{})[parent]; !ok {
-				continue
-			}
+			if _, ok := arr[module].(map[string]interface{})[parent]; ok {
+				
+				// Multiple elements
 
-			listObj := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list]
+				listObj := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list]
 
-			switch listObj.(type) {
-			case map[string]interface{}:
+				switch listObj.(type) {
+					case map[string]interface{}:
 
-				listCast := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].(map[string]interface{})
+						listCast := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].(map[string]interface{})
+
+						for i, key := range keysReversed {
+							listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
+						}
+
+						arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listCast
+
+					case []interface{}:
+
+						listArr := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].([]interface{})
+
+						for i, value := range listArr {
+
+							listItem := value.(map[string]interface{})
+
+							for i, key := range keysReversed {
+								listItem[key].(map[string]interface{})["#seq"] = -(i + 1)
+							}
+
+							listArr[i] = listItem
+						}
+
+						arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listArr
+				}
+
+			} else if _, ok := arr[module].(map[string]interface{})[list]; ok {
+
+				// Single element
+
+				listCast := arr[module].(map[string]interface{})[list].(map[string]interface{})
 
 				for i, key := range keysReversed {
 					listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
 				}
 
-				arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listCast
+				arr[module].(map[string]interface{})[list] = listCast
 
-			case []interface{}:
-
-				listArr := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].([]interface{})
-
-				for i, value := range listArr {
-
-					listItem := value.(map[string]interface{})
-
-					for i, key := range keysReversed {
-						listItem[key].(map[string]interface{})["#seq"] = -(i + 1)
-					}
-
-					listArr[i] = listItem
-				}
-
-				arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listArr
 			}
 		}
 	}
