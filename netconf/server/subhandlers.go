@@ -333,13 +333,17 @@ func reorderKeys(path string, xml []byte) []byte {
 
 				// Single element
 
-				listCast := arr[module].(map[string]interface{})[list].(map[string]interface{})
+				switch arr[module].(map[string]interface{})[list].(type) {
+					case map[string]interface{}:
+						listCast := arr[module].(map[string]interface{})[list].(map[string]interface{})
 
-				for i, key := range keysReversed {
-					listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
+						for i, key := range keysReversed {
+							listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
+						}
+
+						arr[module].(map[string]interface{})[list] = listCast
+					
 				}
-
-				arr[module].(map[string]interface{})[list] = listCast
 
 			}
 		}
