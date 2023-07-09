@@ -202,7 +202,9 @@ func innerGetHandler(rootNode *xmlquery.Node, request GetRequest) (string, error
 
 			// Convert to xml
 			jsonConv, _ := mxj.NewMapJson([]byte(translibResponse))
-			xmlPayload, _ := jsonConv.Xml()
+			conv := postChecks(rootNode, jsonConv)
+
+			xmlPayload, _ := conv.Xml()
 
 			xmlPayload = reorderKeys(request.path, xmlPayload)
 
@@ -216,6 +218,49 @@ func innerGetHandler(rootNode *xmlquery.Node, request GetRequest) (string, error
 	}
 
 	return "", nil
+}
+
+func postChecks(rootNode *xmlquery.Node, jsonConv mxj.Map) mxj.Map {
+
+	filterNode := xmlquery.FindOne(rootNode, "//filter")
+	containers := xmlquery.Find(filterNode, "./*")
+
+	for _, modelContainer := range containers {
+
+		for _, innerContainer := range xmlquery.Find(modelContainer, "./*") {
+
+			for _, child := range xmlquery.Find(innerContainer, "./*") {
+
+				exists, err := jsonConv.Exists(modelContainer.Data + "." + child.Data)
+
+				if !exists || err != nil {
+					// Not translib edge case, continue
+					continue		
+				}
+
+				values, err := jsonConv.ValuesForPath(modelContainer.Data + "." + child.Data)
+
+				glog.Infof("VALUESSSSSSSSSSSSSSS %+v", values)
+
+				if len(values) == 0 {
+					glog.Infof("Empty response, restructuring skipped")
+					continue
+				}
+
+				glog.Infof("Translib edge case handling encountered, restructuring response (%s) (%s)", modelContainer.Data, child.Data)
+				glog.Infof("Pre conversion %+v", jsonConv)
+
+				temp := jsonConv[modelContainer.Data]
+				jsonConv[modelContainer.Data] = mxj.New()
+				jsonConv[modelContainer.Data].(mxj.Map)[innerContainer.Data] = temp
+
+				glog.Infof("Post conversion %+v", jsonConv)
+			}
+
+		}
+	}
+
+	return jsonConv
 }
 
 func filterJson(input string, request GetRequest) (string, error) {
@@ -253,11 +298,10 @@ func filterJson(input string, request GetRequest) (string, error) {
 						aa := arrObj.(map[string]interface{})
 						
 						for k, _ := range aa {
+							glog.Infof("Reorder check %+s %+s", aa , k)
 							// Check if the key exist in the filter, if so keep it. Delete anything else
-							for _, a := range request.filters {
-								if k != a {
-									delete(aa, k)
-								}
+							if !contains(request.filters, k) {
+								delete(aa, k)
 							}
 						}
 					}
@@ -274,11 +318,19 @@ func filterJson(input string, request GetRequest) (string, error) {
 	return string(output), nil
 }
 
+func contains(s []string, str string) bool {
+	for _, v := range s {
+		if v == str {
+			return true
+		}
+	}
+
+	return false
+}
+
 func reorderKeys(path string, xml []byte) []byte {
 
 	arr, _ := mxj.NewMapXmlSeq(xml)
-
-	glog.Infof("Arr %+v", arr)
 
 	for k, keys := range netconf_codegen.SonicMap {
 
@@ -308,7 +360,10 @@ func reorderKeys(path string, xml []byte) []byte {
 						listCast := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list].(map[string]interface{})
 
 						for i, key := range keysReversed {
-							listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
+							// We must check because in lists with 2 or more keys, if filtering is applied, some keys will not be in listCast
+							if val, ok := listCast[key]; ok {
+								val.(map[string]interface{})["#seq"] = -(i + 1)
+							}
 						}
 
 						arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listCast
@@ -322,7 +377,10 @@ func reorderKeys(path string, xml []byte) []byte {
 							listItem := value.(map[string]interface{})
 
 							for i, key := range keysReversed {
-								listItem[key].(map[string]interface{})["#seq"] = -(i + 1)
+								// We must check because in lists with 2 or more keys, if filtering is applied, some keys will not be in listCast
+								if val, ok := listItem[key]; ok {
+									val.(map[string]interface{})["#seq"] = -(i + 1)
+								}
 							}
 
 							listArr[i] = listItem
@@ -331,38 +389,7 @@ func reorderKeys(path string, xml []byte) []byte {
 						arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listArr
 				}
 
-			} else if _, ok := arr[module].(map[string]interface{})[list]; ok {
-
-				switch arr[module].(map[string]interface{})[list].(type) {
-					case map[string]interface{}:
-
-						// Single request
-						listCast := arr[module].(map[string]interface{})[list].(map[string]interface{})
-
-						for i, key := range keysReversed {
-							listCast[key].(map[string]interface{})["#seq"] = -(i + 1)
-						}
-
-						arr[module].(map[string]interface{})[list] = listCast
-					case []interface{}:
-
-						// List request
-						listArr := arr[module].(map[string]interface{})[list].([]interface{})
-
-						for i, value := range listArr {
-
-							listItem := value.(map[string]interface{})
-
-							for i, key := range keysReversed {
-								listItem[key].(map[string]interface{})["#seq"] = -(i + 1)
-							}
-
-							listArr[i] = listItem
-						}
-
-						arr[module].(map[string]interface{})[list] = listArr
-				}
-
+				
 			}
 		}
 	}
