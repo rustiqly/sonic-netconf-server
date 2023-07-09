@@ -240,8 +240,6 @@ func postChecks(rootNode *xmlquery.Node, jsonConv mxj.Map) mxj.Map {
 
 				values, err := jsonConv.ValuesForPath(modelContainer.Data + "." + child.Data)
 
-				glog.Infof("VALUESSSSSSSSSSSSSSS %+v", values)
-
 				if len(values) == 0 {
 					glog.Infof("Empty response, restructuring skipped")
 					continue
@@ -389,7 +387,6 @@ func reorderKeys(path string, xml []byte) []byte {
 						arr[module].(map[string]interface{})[parent].(map[string]interface{})[list] = listArr
 				}
 
-				
 			}
 		}
 	}
