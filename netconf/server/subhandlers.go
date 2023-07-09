@@ -278,6 +278,8 @@ func reorderKeys(path string, xml []byte) []byte {
 
 	arr, _ := mxj.NewMapXmlSeq(xml)
 
+	glog.Infof("Arr %+v", arr)
+
 	for k, keys := range netconf_codegen.SonicMap {
 
 		var keysReversed = make([]string, len(keys))
@@ -296,7 +298,7 @@ func reorderKeys(path string, xml []byte) []byte {
 
 			if _, ok := arr[module].(map[string]interface{})[parent]; ok {
 				
-				// Multiple elements
+				// Main container request
 
 				listObj := arr[module].(map[string]interface{})[parent].(map[string]interface{})[list]
 
@@ -331,10 +333,10 @@ func reorderKeys(path string, xml []byte) []byte {
 
 			} else if _, ok := arr[module].(map[string]interface{})[list]; ok {
 
-				// Single element
-
 				switch arr[module].(map[string]interface{})[list].(type) {
 					case map[string]interface{}:
+
+						// Single request
 						listCast := arr[module].(map[string]interface{})[list].(map[string]interface{})
 
 						for i, key := range keysReversed {
@@ -342,7 +344,23 @@ func reorderKeys(path string, xml []byte) []byte {
 						}
 
 						arr[module].(map[string]interface{})[list] = listCast
-					
+					case []interface{}:
+
+						// List request
+						listArr := arr[module].(map[string]interface{})[list].([]interface{})
+
+						for i, value := range listArr {
+
+							listItem := value.(map[string]interface{})
+
+							for i, key := range keysReversed {
+								listItem[key].(map[string]interface{})["#seq"] = -(i + 1)
+							}
+
+							listArr[i] = listItem
+						}
+
+						arr[module].(map[string]interface{})[list] = listArr
 				}
 
 			}
