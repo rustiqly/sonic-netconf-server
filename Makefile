@@ -48,7 +48,7 @@ go-deps-clean:
 	$(RM) -r vendor
 
 .PHONY: netconf
-netconf: $(GO_DEPS) models
+netconf: go-deps-clean $(GO_DEPS) models 
 	$(MAKE) -C netconf
 
 # Special target for local compilation of REST server binary.

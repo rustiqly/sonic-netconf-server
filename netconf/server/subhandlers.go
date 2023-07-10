@@ -817,8 +817,43 @@ func UploadFile(path string, targetUrl string) error {
 }
 
 func saveConfig() error {
+
 	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
 	_, err := exec.Command("bash", args...).Output()
+
+	if err != nil {
+		glog.Error("Config save failed, configuration will not persist")
+		return err
+	}
+	
+	glog.Infof("Configuration saved");
+	
+	exists, err := redisClient.Exists("VERSIONS|CONFIGURATION").Result()
+
+	if err == nil && exists == 1 {
+		
+		result, err := redisClient.HGetAll("VERSIONS|CONFIGURATION").Result()
+
+		if version, ok := result["VERSION"]; err == nil && ok {
+
+			version, err := strconv.Atoi(version)
+
+			if err == nil {
+
+				newVersion := version + 1
+
+				_, err = redisClient.HSet("VERSIONS|CONFIGURATION", "VERSION", newVersion).Result()
+
+				if err == nil {
+					glog.Infof("Updated configuration version from %d to %d", version , newVersion)
+				}
+
+			}
+
+		}
+
+	}
+
 	return err
 }
 
