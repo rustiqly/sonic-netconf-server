@@ -818,16 +818,7 @@ func UploadFile(path string, targetUrl string) error {
 
 func saveConfig() error {
 
-	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
-	_, err := exec.Command("bash", args...).Output()
-
-	if err != nil {
-		glog.Error("Config save failed, configuration will not persist")
-		return err
-	}
-	
-	glog.Infof("Configuration saved");
-	
+	// Config increment checks
 	exists, err := redisClient.Exists("VERSIONS|CONFIGURATION").Result()
 
 	if err == nil && exists == 1 {
@@ -851,10 +842,19 @@ func saveConfig() error {
 			}
 
 		}
-
 	}
 
-	return err
+	args := []string{"-c", "$(sonic-cfggen -d --print-data > /etc/sonic/config_db.json)"}
+	_, err = exec.Command("bash", args...).Output()
+
+	if err != nil {
+		glog.Error("Config save failed, configuration will not persist")
+		return err
+	}
+
+	glog.Infof("Configuration saved");
+
+	return nil
 }
 
 func Reverse(s []string) []string {
