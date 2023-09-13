@@ -192,6 +192,11 @@ func ParseEditRequest(node *xmlquery.Node) ([]Config, error) {
 		configs = append(configs, mergeRequest...)
 	}
 
+	replaceRequest, err := extractTransactionalRequestByOpTag2(node, "replace")
+	if err == nil {
+		configs = append(configs, replaceRequest...)
+	}
+
 	fmt.Println("configs", configs)
 
 	return configs, nil
