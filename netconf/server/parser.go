@@ -24,6 +24,7 @@ type GetRequest struct {
 	path 		string
 	filters 	[]string
 }
+
 type RPCRequest struct {
 	path    string
 	payload map[string]interface{}
@@ -192,7 +193,7 @@ func ParseEditRequest(node *xmlquery.Node) ([]Config, error) {
 		configs = append(configs, mergeRequest...)
 	}
 
-	replaceRequest, err := extractTransactionalRequestByOpTag2(node, "replace")
+	replaceRequest, err := extractTransactionalRequestByOpTag3(node, "replace")
 	if err == nil {
 		configs = append(configs, replaceRequest...)
 	}
@@ -300,7 +301,84 @@ func extractTransactionalRequestByOpTag2(node *xmlquery.Node, opTag string) ([]C
 			}
 		}
 
-		configs = append(configs, config)
+		if len(config.payload) != 0 {
+			configs = append(configs, config)
+		}
+	}
+
+	return configs, nil
+}
+
+func extractTransactionalRequestByOpTag3(node *xmlquery.Node, opTag string) ([]Config, error) {
+
+	var configs []Config
+
+	containers := xmlquery.Find(node, "//*[local-name() = 'config']/*")
+
+	for _, modelContainer := range containers {
+
+		var config Config
+		config.operation = opTag
+		config.payload = make(map[string]interface{})
+
+		config.path = "/" + modelContainer.Data + ":" + modelContainer.Data //translib path building
+
+		// Handle inner container
+		for _, innerContainer := range xmlquery.Find(modelContainer, "./*") {
+	
+			// Handle outer container
+			innerContainerPayload := make(map[string][]interface{})
+
+			// Handle each "list" inside innerContainer
+			lists := xmlquery.Find(innerContainer, "./*")
+
+			for _, list := range lists {
+
+				listOp := getOperation(list, "merge")
+
+				// Check leafs for atomic operations
+				leafs := xmlquery.Find(list, "./*")
+
+				listItemData := make(map[string]interface{})
+
+				for _, leaf := range leafs {
+
+					leafTextNode := xmlquery.FindOne(leaf, "text()")
+					leafText := getInnerText(leafTextNode)
+					leafTag := strings.TrimSpace(leaf.Data)
+
+					leafOp := getOperation(leaf, "n/a")
+					if leafOp == "n/a" {
+						leafOp = listOp
+					}
+
+					if leafOp != opTag {
+						continue
+					}
+
+					// quotes means we want this leaf to be a string
+					str, ok := leafText.(string)
+					if ok && strings.Contains(str, "\"") {
+						leafText, _ = strconv.Unquote(str)
+					}
+
+					listItemData[leafTag] = leafText
+				}
+
+				if len(listItemData) != 0 {
+					innerContainerPayload[list.Data] = append(innerContainerPayload[list.Data], listItemData)
+				}
+			}
+
+			if len(innerContainerPayload) != 0 {
+				config.payload[modelContainer.Data+":"+modelContainer.Data] = make(map[string]interface{})
+				config.payload[modelContainer.Data+":"+modelContainer.Data].(map[string]interface{})[innerContainer.Data] = innerContainerPayload
+			}
+		}
+
+		if len(config.payload) != 0 {
+			configs = append(configs, config)
+		}
 	}
 
 	return configs, nil

@@ -530,12 +530,11 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 
 		req := translib.SetRequest{Path: config.path, Payload: jsonStr}
 
-		
 		switch config.operation {
 		case "merge":
 			_, err = translib.Create(req)
 		case "replace":
-			glog.Infof("XXXXXXXXXXX Replacing stuff")
+			req.StrictCreate = true
 			_, err = translib.Replace(req)
 		case "delete":
 			_, err = translib.Delete(req)
