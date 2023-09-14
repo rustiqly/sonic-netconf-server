@@ -675,12 +675,30 @@ func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 
 	glog.Info("requests %+v", requests)
 
-	for _, request := range requests {
-		jsonStr, _ := json.Marshal(request.payload)
-		req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
-		resp, _ := translib.Action(req)
-		glog.Infof("Response %s", resp)
+	request := requests[0]
+	jsonStr, _ := json.Marshal(request.payload)
+	req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
+	resp, err := translib.Action(req)
+
+	if err != nil {
+		return "", err
 	}
+
+	glog.Infof("RPC request %+v Response %v", request, resp)
+
+	if string(resp.Payload) != "" {
+		return "<data>" + string(resp.Payload) + "</data>", nil
+	}
+
+	// for _, request := range requests {
+	// 	jsonStr, _ := json.Marshal(request.payload)
+	// 	req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
+	// 	resp, err := translib.Action(req)
+	// 	if err != nil {
+	// 		return "", err
+	// 	}
+	// 	glog.Infof("RPC request %+v Response %v", request, resp)
+	// }
 
 	return "ok", nil
 }
