@@ -533,6 +533,9 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		switch config.operation {
 		case "merge":
 			_, err = translib.Create(req)
+		case "replace":
+			req.StrictCreate = true
+			_, err = translib.Replace(req)
 		case "delete":
 			_, err = translib.Delete(req)
 		default:
@@ -551,13 +554,6 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		glog.Infof("[TACPLUS] accounting passed - edit-config: %s", config.path)
 		
 	}
-
-	// // Account
-	// if !authenticator.Account("edit-config", args) {
-	// 	return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed edit-config - args:%s", args))
-	// }
-
-	// glog.Infof("[TACPLUS] accounting passed - edit-config: %s", args)
 
 	return "ok", nil
 }
@@ -660,7 +656,6 @@ func unlockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 	glog.Infof("[TACPLUS] accounting passed - unlock: %s", "")
 
 	return "ok", nil
-
 }
 
 func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
@@ -675,12 +670,30 @@ func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 
 	glog.Info("requests %+v", requests)
 
-	for _, request := range requests {
-		jsonStr, _ := json.Marshal(request.payload)
-		req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
-		resp, _ := translib.Action(req)
-		glog.Infof("Response %s", resp)
+	request := requests[0]
+	jsonStr, _ := json.Marshal(request.payload)
+	req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
+	resp, err := translib.Action(req)
+
+	if err != nil {
+		return "", err
 	}
+
+	glog.Infof("RPC request %+v Response %v", request, resp)
+
+	if string(resp.Payload) != "" {
+		return "<data>" + string(resp.Payload) + "</data>", nil
+	}
+
+	// for _, request := range requests {
+	// 	jsonStr, _ := json.Marshal(request.payload)
+	// 	req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
+	// 	resp, err := translib.Action(req)
+	// 	if err != nil {
+	// 		return "", err
+	// 	}
+	// 	glog.Infof("RPC request %+v Response %v", request, resp)
+	// }
 
 	return "ok", nil
 }
@@ -760,7 +773,6 @@ func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(stri
 	glog.Infof("[TACPLUS] accounting passed - %s", "copy-config")
 
 	return "ok", nil
-
 }
 
 func UploadFile(path string, targetUrl string) error {
