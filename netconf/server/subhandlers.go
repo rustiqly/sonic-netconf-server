@@ -533,8 +533,15 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		switch config.operation {
 		case "merge":
 			_, err = translib.Create(req)
+		case "create":
+			req.Strict = true
+			_, err = translib.Create(req)
+		case "remove":
+			_, err = translib.Delete(req)
+			if err != nil && err.Error() == "Resource not found" {
+				err = nil				
+			}
 		case "replace":
-			req.StrictCreate = false
 			_, err = translib.Replace(req)
 		case "delete":
 			_, err = translib.Delete(req)
