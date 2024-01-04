@@ -107,8 +107,7 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]GetRequest, error) 
 
 				glog.Infof("Searching for keys and updating path")
 
-				listFilters := []string{}
-
+				
 				for _, key := range keys {
 					keyNode := xmlquery.FindOne(child, "//*[local-name() = '"+key+"']")
 					
@@ -120,10 +119,25 @@ func ParseGetRequest(node *xmlquery.Node, appendAll bool) ([]GetRequest, error) 
 						if dataNode != nil {
 							innerPath += "[" + key + "=" + fmt.Sprintf("%v", strings.TrimSpace(dataNode.Data)) + "]"
 							glog.Infof("Path updated %s", innerPath)
-						}else{
-							glog.Infof("Key [%s] data is empty, should be used as list filter", key)
-							listFilters = append(listFilters, key)
 						}
+
+						// else{
+						// 	glog.Infof("Key [%s] data is empty, should be used as list filter", key)
+						// 	listFilters = append(listFilters, key)
+						// }
+					}
+				}
+
+
+				listFilters := []string{}
+
+				leafs := xmlquery.Find(child, "./*")
+
+				for _, leaf := range leafs {
+					dataNode := xmlquery.FindOne(child, "//*[local-name() = '"+leaf.Data+"']/text()")
+					if dataNode == nil {
+						glog.Infof("Empty leaf, should be used as list filter", leaf.Data)
+						listFilters = append(listFilters, leaf.Data)
 					}
 				}
 
