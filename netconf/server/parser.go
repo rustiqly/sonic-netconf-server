@@ -202,6 +202,11 @@ func ParseEditRequest(node *xmlquery.Node) ([]Config, error) {
 		configs = append(configs, deleteRequest...)
 	}
 
+	removeRequest, err := extractAtomicRequestsByOpTag2(node, "remove")
+	if err == nil {
+		configs = append(configs, removeRequest...)
+	}
+
 	mergeRequest, err := extractTransactionalRequestByOpTag2(node, "merge")
 	if err == nil {
 		configs = append(configs, mergeRequest...)
@@ -212,7 +217,12 @@ func ParseEditRequest(node *xmlquery.Node) ([]Config, error) {
 		configs = append(configs, replaceRequest...)
 	}
 
-	fmt.Println("configs", configs)
+	createRequest, err := extractTransactionalRequestByOpTag2(node, "create")
+	if err == nil {
+		configs = append(configs, createRequest...)
+	}
+
+	glog.Infof("configs", configs)
 
 	return configs, nil
 }
