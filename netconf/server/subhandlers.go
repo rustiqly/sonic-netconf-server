@@ -278,7 +278,9 @@ func filterJson(input string, request GetRequest) (string, error) {
 		for listKey, list := range container.(map[string]interface{}){
 			glog.Infof("List key %+v, list %+v", listKey, list)
 
-			r := regexp.MustCompile("/.*/.*/(\\S+)")
+			glog.Infof("Request path %+v", request.path)
+
+			r := regexp.MustCompile("/.*/.*/(\\w+)")
 			s := r.FindStringSubmatch(request.path)
 
 			if len(s) == 0 {
@@ -292,9 +294,10 @@ func filterJson(input string, request GetRequest) (string, error) {
 				arr, ok := list.([]interface{})
 				if ok {
 					for _, arrObj := range arr {
+
 						// Iterate over each element of the obj to see if we need to filter it
 						aa := arrObj.(map[string]interface{})
-						
+
 						for k, _ := range aa {
 							glog.Infof("Reorder check %+s %+s", aa , k)
 							// Check if the key exist in the filter, if so keep it. Delete anything else
@@ -542,6 +545,7 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 				err = nil				
 			}
 		case "replace":
+			req.Strict = false
 			_, err = translib.Replace(req)
 		case "delete":
 			_, err = translib.Delete(req)
