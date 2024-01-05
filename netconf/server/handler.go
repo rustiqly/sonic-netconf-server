@@ -120,7 +120,7 @@ func process(session ssh.Session, requestStr string) string {
 		return createErrorResponse(extractMessageId(requestStr), errors.New("Unable to read message-id in rpc"))
 	}
 
-	response, err := handleRequest(session.Context().(ssh.Context), rootNode)
+	response, err := handleRequest(session, rootNode)
 
 	if err != nil {
 		return createErrorResponse(messageId, err)
@@ -129,12 +129,14 @@ func process(session ssh.Session, requestStr string) string {
 	return CreateResponse(messageId, []byte(response))
 }
 
-func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, error) {
+func handleRequest(session ssh.Session, requestNode *xmlquery.Node) (string, error) {
 
 	var response string
 	var err error
 
 	typeNode := xmlquery.FindOne(requestNode, "//*[local-name() = 'rpc']/*") // Get request type (get or edit-config)
+
+	context := session.Context().(ssh.Context)
 
 	switch typeNode.Data {
 	case "get":
@@ -147,13 +149,14 @@ func handleRequest(context ssh.Context, requestNode *xmlquery.Node) (string, err
 		response, err = withAuth(context, "get-schema", func() (string, error) { return FilterSchemaHandler(requestNode) })
 	case "commit":
 		response, err = commitRequestHandler(context, requestNode)
-	case "close-session":
+	case "close-session", "kill-session":
 		return withAuth(context, "close-session", func() (string, error) {
 			if context.Value("auth-type").(string) == "tacacs" {
 				tacConn := context.Value("auth").(lib.TacacsAuthenticator)
 				glog.Infof("[TACPLUS] Closing tacacs server connection")
 				tacConn.Disconnect()
 				context.SetValue("auth", nil) // completely remove tacacs connection reference
+				time.AfterFunc(1* time.Second, func() {session.Close()}) 
 			}
 			return "ok", nil
 		})
