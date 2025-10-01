@@ -11,7 +11,9 @@ import (
 	"os"
 	"strconv"
 
+	"orange/sonic-netconf-server/lib"
 	"orange/sonic-netconf-server/netconf/server"
+	"orange/sonic-netconf-server/tacplus"
 
 	gliderssh "github.com/gliderlabs/ssh"
 	"github.com/go-redis/redis/v7"
@@ -67,48 +69,48 @@ func main() {
 
 func authenticate(ctx gliderssh.Context, password string) bool {
 
-	// if tacplus.IsTacacsAAAEnabled() {
+	if tacplus.IsTacacsAAAEnabled() {
 
-	// 	glog.Infof("TACACS enabled on AAA, creating a connection to tacacs server")
+		glog.Infof("TACACS enabled on AAA, creating a connection to tacacs server")
 
-	// 	protocol, service, err := GetNetconfTacacsConfig()
-	// 	if err != nil {
-	// 		return false
-	// 	}
+		protocol, service, err := GetNetconfTacacsConfig()
+		if err != nil {
+			return false
+		}
 
-	// 	glog.Infof("[TACPLUS] protocol: %s - service: %s", protocol, service)
+		glog.Infof("[TACPLUS] protocol: %s - service: %s", protocol, service)
 
-	// 	tacAuthenticator, err := lib.NewTacacsAuthenticator(ctx, protocol, service, ctx.User(), password, ctx.RemoteAddr().String())
+		tacAuthenticator, err := lib.NewTacacsAuthenticator(ctx, protocol, service, ctx.User(), password, ctx.RemoteAddr().String())
 
-	// 	if err != nil {
-	// 		return false
-	// 	}
+		if err != nil {
+			return false
+		}
 
-	// 	glog.Infof("Starting authentication")
+		glog.Infof("Starting authentication")
 
-	// 	if !tacAuthenticator.Authenticate() {
-	// 		glog.Errorf("[TACPLUS] Authentication failed user:(%s)", ctx.User())
-	// 		tacAuthenticator.Disconnect()
-	// 		return false
-	// 	}
+		if !tacAuthenticator.Authenticate() {
+			glog.Errorf("[TACPLUS] Authentication failed user:(%s)", ctx.User())
+			tacAuthenticator.Disconnect()
+			return false
+		}
 
-	// 	ctx.SetValue("auth-type", "tacacs")
-	// 	ctx.SetValue("auth", tacAuthenticator)
-	// } else {
+		ctx.SetValue("auth-type", "tacacs")
+		ctx.SetValue("auth", tacAuthenticator)
+	} else {
 
-	// 	// No tacacs, authenticate with local credentials
-	// 	glog.Infof("TACACS not enabled on AAA, authenticating with local credentials")
+		// No tacacs, authenticate with local credentials
+		glog.Infof("TACACS not enabled on AAA, authenticating with local credentials")
 
-	// 	pamAuthenticator := lib.NewPAMAuthenticator(ctx.User(), password)
+		pamAuthenticator := lib.NewPAMAuthenticator(ctx.User(), password)
 
-	// 	if !pamAuthenticator.Authenticate() {
-	// 		glog.Errorf("[PAM] Authentication failed user:(%s)", ctx.User())
-	// 		return false
-	// 	}
+		if !pamAuthenticator.Authenticate() {
+			glog.Errorf("[PAM] Authentication failed user:(%s)", ctx.User())
+			return false
+		}
 
-	// 	ctx.SetValue("auth-type", "local")
-	// 	ctx.SetValue("auth", pamAuthenticator)
-	// }
+		ctx.SetValue("auth-type", "local")
+		ctx.SetValue("auth", pamAuthenticator)
+	}
 
 	ctx.SetValue("uuid", uuid.New().String())
 	glog.Infof("Authentication success user:(%s)", ctx.User())
