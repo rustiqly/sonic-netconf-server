@@ -140,9 +140,9 @@ func handleRequest(session ssh.Session, requestNode *xmlquery.Node) (string, err
 
 	switch typeNode.Data {
 	case "get":
-		response, err = GetRequestHandler(context, requestNode)
+		response, err = GetRequestHandler(context, requestNode, ALL)
 	case "get-config":
-		response, err = GetRequestHandler(context, requestNode)
+		response, err = GetRequestHandler(context, requestNode, CONFIG)
 	case "edit-config":
 		response, err = EditRequestHandler(context, requestNode)
 	case "get-schema":
@@ -151,23 +151,12 @@ func handleRequest(session ssh.Session, requestNode *xmlquery.Node) (string, err
 		response, err = commitRequestHandler(context, requestNode)
 	case "close-session", "kill-session":
 		return withAuth(context, "close-session", func() (string, error) {
-			if context.Value("auth-type").(string) == "tacacs" {
-				tacConn := context.Value("auth").(lib.TacacsAuthenticator)
-				glog.Infof("[TACPLUS] Closing tacacs server connection")
-				tacConn.Disconnect()
-				context.SetValue("auth", nil) // completely remove tacacs connection reference
-				time.AfterFunc(1* time.Second, func() {session.Close()}) 
-			}
 			return "ok", nil
 		})
 	case "lock":
 		response, err = lockRequestHandler(context, requestNode)
 	case "unlock":
 		response, err = unlockRequestHandler(context, requestNode)
-	case "sonic-rpc":
-		response, err = RpcRequestHandler(context, requestNode)
-	case "copy-config":
-		response, err = copyConfigRequestHandler(context,requestNode)
 	default:
 		return "", errors.New("Unsupported command")
 	}
@@ -243,8 +232,6 @@ func SplitAt(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return 0, nil, nil
 }
 
-
-
 func trimInput(input string) string {
 	trimmed := strings.Trim(string(input), "\n")
 	trimmed = strings.Trim(string(trimmed), "\r")
@@ -283,7 +270,7 @@ func withAuth(context ssh.Context, command string, fn func() (string, error)) (s
 		return "", errors.New(fmt.Sprintf("Unauthorized access %s", command))
 	}
 
-	glog.Infof("[TACPLUS] authorization passed %s", command)
+	glog.Infof("Authorization passed %s", command)
 
 	response, err := fn()
 
@@ -295,7 +282,7 @@ func withAuth(context ssh.Context, command string, fn func() (string, error)) (s
 		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", command))
 	}
 
-	glog.Infof("[TACPLUS] accounting passed - %s", command)
+	glog.Infof("Accounting passed - %s", command)
 
 	return response, nil
 }

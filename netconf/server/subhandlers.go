@@ -1,19 +1,14 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
-	"io"
 	"io/ioutil"
-	"mime/multipart"
-	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -45,6 +40,13 @@ func init() {
 		DB:       4,
 	})
 }
+
+type DbTarget string
+
+const (
+	ALL DbTarget = "all"
+	CONFIG DbTarget = "config"
+)
 
 func readYangModules() {
 	// return all schemas in module form
@@ -98,7 +100,7 @@ func readYangModules() {
 	read = true
 }
 
-func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
+func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node, target DbTarget) (string, error) {
 
 	requests, err := ParseGetRequest(rootNode, false)
 
@@ -113,7 +115,7 @@ func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 		if !authenticator.Authorize("get", request.path) {
 			return "", errors.New(fmt.Sprintf("Unauthorized access %+s", request.path))
 		}
-		glog.Infof("[TACPLUS] authorization passed %+s", request.path)
+		glog.Infof("Authorization passed %+s", request.path)
 	}
 
 	resultStr := "<data>"
@@ -121,7 +123,7 @@ func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 	args := ""
 	for _, request := range requests {
 
-		pathResult, err := innerGetHandler(rootNode, request)
+		pathResult, err := innerGetHandler(rootNode, request, target)
 
 		if err != nil {
 			return "", errors.New("Failed to handle request")
@@ -133,17 +135,17 @@ func GetRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, er
 
 	// Account
 	if !authenticator.Account("get", args) {
-		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed get - args:%s", args))
+		return "", errors.New(fmt.Sprintf("Accounting failed get - args:%s", args))
 	}
 
-	glog.Infof("[TACPLUS] accounting passed - get: %s", args)
+	glog.Infof("Accounting passed - get: %s", args)
 
 	resultStr += "</data>"
 
 	return resultStr, nil
 }
 
-func innerGetHandler(rootNode *xmlquery.Node, request GetRequest) (string, error) {
+func innerGetHandler(rootNode *xmlquery.Node, request GetRequest, target DbTarget) (string, error) {
 
 	switch request.path {
 	case "/modules-state:modules-state":
@@ -159,7 +161,7 @@ func innerGetHandler(rootNode *xmlquery.Node, request GetRequest) (string, error
 	case "/operation:operation":
 		return "", nil
 	default:
-		req := translib.GetRequest{Path: request.path}
+		req := translib.GetRequest{Path: request.path, QueryParams: translib.QueryParameters{Content: string(target)}}
 		resp, err1 := translib.Get(req)
 		if err1 == nil {
 			translibResponse := string(resp.Payload)
@@ -520,7 +522,7 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		if !authenticator.Authorize("edit-config", config.path) {
 			return "", errors.New(fmt.Sprintf("Unauthorized access %s", config.path))
 		}
-		glog.Infof("[TACPLUS] authorization passed %s", config.path)
+		glog.Infof("Authorization passed %s", config.path)
 	}
 
 	for _, config := range configs {
@@ -559,10 +561,10 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 
 		// Account
 		if !authenticator.Account("edit-config", config.path) {
-			return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed edit-config - args:%s", config.path))
+			return "", errors.New(fmt.Sprintf("Accounting failed edit-config - args:%s", config.path))
 		}
 
-		glog.Infof("[TACPLUS] accounting passed - edit-config: %s", config.path)
+		glog.Infof("Accounting passed - edit-config: %s", config.path)
 		
 	}
 
@@ -604,7 +606,7 @@ func lockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		return "", errors.New(fmt.Sprintf("Unauthorized access %+s", "lock"))
 	}
 
-	glog.Infof("[TACPLUS] authorization passed %+s", "lock")
+	glog.Infof("Authorization passed %+s", "lock")
 
 	lockAcquired, _ := redisClient.SetNX("CONFIG_LOCK", context.Value("uuid"), 15 * time.Second).Result()
 
@@ -616,10 +618,10 @@ func lockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 
 	// Account
 	if !authenticator.Account("get", "") {
-		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed lock - args:%s", ""))
+		return "", errors.New(fmt.Sprintf("Accounting failed lock - args:%s", ""))
 	}
 
-	glog.Infof("[TACPLUS] accounting passed - lock: %s", "")
+	glog.Infof("Accounting passed - lock: %s", "")
 
 	return resultStr, nil
 }
@@ -641,7 +643,7 @@ func unlockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 		return "", errors.New(fmt.Sprintf("Unauthorized access %+s", "unlock"))
 	}
 
-	glog.Infof("[TACPLUS] authorization passed %+s", "lock")
+	glog.Infof("Authorization passed %+s", "lock")
 
 	lock, err := redisClient.Get("CONFIG_LOCK").Result()
 
@@ -661,50 +663,10 @@ func unlockRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 
 	// Account
 	if !authenticator.Account("unlock", "") {
-		return "", errors.New(fmt.Sprintf("[TACACAs] accounting failed unlock - args:%s", ""))
+		return "", errors.New(fmt.Sprintf("Accounting failed unlock - args:%s", ""))
 	}
 
-	glog.Infof("[TACPLUS] accounting passed - unlock: %s", "")
-
-	return "ok", nil
-}
-
-func RpcRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, error) {
-
-	glog.Infof("RPC request handler")
-
-	requests, err := ParseRPCRequest(rootNode)
-
-	if err != nil {
-		return "", err
-	}
-
-	glog.Info("requests %+v", requests)
-
-	request := requests[0]
-	jsonStr, _ := json.Marshal(request.payload)
-	req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
-	resp, err := translib.Action(req)
-
-	if err != nil {
-		return "", err
-	}
-
-	glog.Infof("RPC request %+v Response %v", request, resp)
-
-	if string(resp.Payload) != "" {
-		return "<data>" + string(resp.Payload) + "</data>", nil
-	}
-
-	// for _, request := range requests {
-	// 	jsonStr, _ := json.Marshal(request.payload)
-	// 	req := translib.ActionRequest{Path: request.path, Payload: []byte(jsonStr)}
-	// 	resp, err := translib.Action(req)
-	// 	if err != nil {
-	// 		return "", err
-	// 	}
-	// 	glog.Infof("RPC request %+v Response %v", request, resp)
-	// }
+	glog.Infof("Accounting passed - unlock: %s", "")
 
 	return "ok", nil
 }
@@ -717,7 +679,7 @@ func commitRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 		return "", errors.New(fmt.Sprintf("Unauthorized access %s", "commit"))
 	}
 
-	glog.Infof("[TACPLUS] authorization passed %s", "commit")
+	glog.Infof("Authorization passed %s", "commit")
 
 	err := saveConfig()
 
@@ -729,114 +691,9 @@ func commitRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string,
 		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", "commit"))
 	}
 
-	glog.Infof("[TACPLUS] accounting passed - %s", "commit")
+	glog.Infof("Accounting passed - %s", "commit")
 
 	return "ok", nil
-}
-
-func copyConfigRequestHandler(context ssh.Context, rootNode *xmlquery.Node)(string,error){
-
-	targetNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'target']/*")
-	if targetNode == nil {
-		return "", errors.New("target store unsepecified")
-	}
-
-	sourceNode := xmlquery.FindOne(rootNode, "//*[local-name() = 'source']/*")
-	if sourceNode == nil {
-		return "", errors.New("source store unsepecified")
-	}
-
-	authenticator := context.Value("auth").(lib.Authenticator)
-
-	if !authenticator.Authorize("copy-config", "") {
-		return "", errors.New(fmt.Sprintf("Unauthorized access %s", "copy-config"))
-	}
-
-	glog.Infof("[TACPLUS] authorization passed %s", "copy-config")
-
-	if targetNode.Data == "startup" && sourceNode.Data == "running" {
-		// Copy run start
-		err := saveConfig()
-		if err != nil {
-			return "", errors.New("Unable to copy running store to startup store, configuration will not persist after reboot")
-		}
-	} else if targetNode.Data == "url" && sourceNode.Data == "startup" {
-		// Backup startup config to a url
-		glog.Info("Bakcup startup to url")
-
-		urlNode := xmlquery.FindOne(targetNode, "//*[local-name() = 'url']/text()")
-		if urlNode == nil {
-			return "", errors.New("Unable to parse url tag")
-		}
-
-		if err := UploadFile("/etc/sonic/config_db.json", urlNode.Data); err != nil {
-			return "", err
-		}
-
-	} else {
-		return "" ,errors.New("Unsupported combination of source and target nodes")
-	}
-
-	if !authenticator.Account("copy-config", "") {
-		return "", errors.New(fmt.Sprintf("Accounting failed cmd:%s", "copy-config"))
-	}
-
-	glog.Infof("[TACPLUS] accounting passed - %s", "copy-config")
-
-	return "ok", nil
-}
-
-func UploadFile(path string, targetUrl string) error {
-
-	form := new(bytes.Buffer)
-	writer := multipart.NewWriter(form)
-
-	fw, err := writer.CreateFormFile("files", filepath.Base(path))
-	if err != nil {
-		return err
-	}
-
-	fd, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-
-	defer fd.Close()
-	_, err = io.Copy(fw, fd)
-	if err != nil {
-		return err
-	}
-
-	writer.Close()
-
-	client := &http.Client{}
-
-	req, err := http.NewRequest("POST", targetUrl, form)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	// req.SetBasicAuth(username, password)
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return err
-	}
-
-	defer resp.Body.Close()
-
-	bodyText, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 204 {
-		return errors.New("Upload request returned an invalid status code: [" + strconv.Itoa(resp.StatusCode) + "]")
-	}
-
-	glog.Infof("Sucessfull upload request response %+s", bodyText)
-	return nil
 }
 
 func saveConfig() error {
@@ -880,9 +737,3 @@ func saveConfig() error {
 	return nil
 }
 
-func Reverse(s []string) []string {
-	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
-		s[i], s[j] = s[j], s[i]
-	}
-	return s
-}
