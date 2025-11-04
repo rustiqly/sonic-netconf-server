@@ -539,7 +539,6 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 		case "merge":
 			_, err = translib.Create(req)
 		case "create":
-			req.Strict = true
 			_, err = translib.Create(req)
 		case "remove":
 			_, err = translib.Delete(req)
@@ -547,7 +546,6 @@ func EditRequestHandler(context ssh.Context, rootNode *xmlquery.Node) (string, e
 				err = nil				
 			}
 		case "replace":
-			req.Strict = false
 			_, err = translib.Replace(req)
 		case "delete":
 			_, err = translib.Delete(req)
